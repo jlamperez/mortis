@@ -45,16 +45,6 @@ def build_css(image_path: str) -> str:
 
 def mortis_reply(message, history, model_name):
     msg, mood, gesture = ask_mortis(message, model_name=model_name)
-
-    body = {
-        "mood": mood,
-        "gesture": gesture
-    }
-
-    # Opcional: aquí podrías llamar a move_arm(gesture)
-    print(json.dumps(body, ensure_ascii=False))
-
-    # return "=== Mortis says ===\n" + msg + "\n" + json.dumps(body, ensure_ascii=False)
     return msg
 
 
@@ -86,10 +76,10 @@ def ui() -> gr.Blocks:
 
             with gr.Column():
                 gr.Video(
-                    sources=["webcam"],   # usa la cámara del navegador
+                    sources=["webcam"],
                     label="Camera view",
                     height=480,
-                    include_audio=False,  # sin audio
+                    include_audio=False,
                 )
                 gr.Markdown("**Webcam (local, no data upload)**\nThe video is only processed in your browser.")
 

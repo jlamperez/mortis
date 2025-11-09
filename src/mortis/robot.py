@@ -120,7 +120,7 @@ class MortisArm:
         print(f"Executing gesture: '{gesture_name}'...")
 
         for action, delay in sequence:
-            print(f"  -> Sending action: {action}")
+            # print(f"  -> Sending action: {action}")
             self.robot.send_action(action)
             time.sleep(delay)
 

@@ -44,7 +44,7 @@ def ask_mortis(user_msg: str, model_name:str):
     if not mortis_arm.connected:
         mortis_arm.connect()
 
-    print(f"Preguntando a Mortis (modelo: {model_name})...")
+    print(f"Asking Mortis (model: {model_name})...")
     headers = {"Content-Type":"application/json","Authorization":f"Bearer {API_KEY}"}
     data = {
         "model": model_name,
