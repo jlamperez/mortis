@@ -6,27 +6,28 @@ APP := mortis
 MODULE := mortis.app
 DEMO := examples/demo.py
 
-# Variables de entorno esperadas
+# Environment variables
 ENV_FILE := .env
 REQUIRED_ENV := MULTIVERSE_COMPACTIFAI_API_KEY
 
 # ---------- Targets ----------
-.PHONY: help install sync lock upgrade run run-m calibrate demo fmt lint test check-env add-% export clean
+.PHONY: help install sync lock upgrade run run-m calibrate test-gesture demo fmt lint test check-env add-% export clean
 
 help:
-	@echo "Comandos:"
-	@echo "  make install     - Instala deps (crea .venv si no existe)"
-	@echo "  make sync        - Igual que install (alias)"
-	@echo "  make lock        - Genera/actualiza uv.lock"
-	@echo "  make upgrade     - Sube versiones y regenera lock"
-	@echo "  make run         - Ejecuta CLI '$(APP)'"
-	@echo "  make run-m       - Ejecuta 'python -m $(MODULE)'"
-	@echo "  make calibrate   - Ejecuta el script de calibración del robot"
-	@echo "  make demo        - Ejecuta $(DEMO)"
-	@echo "  make check-env   - Verifica $(ENV_FILE) y variables requeridas"
-	@echo "  make add-<pkg>   - Añade dependencia con uv (ej: make add-python-dotenv)"
-	@echo "  make export      - Exporta requirements.txt desde uv.lock"
-	@echo "  make clean       - Limpia artefactos"
+	@echo "Available commands:"
+	@echo "  make install     - Install dependencies (creates .venv if it doesn't exist)"
+	@echo "  make sync        - Same as install (alias)"
+	@echo "  make lock        - Generate/update uv.lock"
+	@echo "  make upgrade     - Upgrade versions and regenerate lock"
+	@echo "  make run         - Run CLI '$(APP)'"
+	@echo "  make run-m       - Run 'python -m $(MODULE)'"
+	@echo "  make calibrate   - Run the robot calibration script"
+	@echo "  make test-gesture- Run a test gesture with the robotic arm"
+	@echo "  make demo        - Run $(DEMO)"
+	@echo "  make check-env   - Check $(ENV_FILE) and required variables"
+	@echo "  make add-<pkg>   - Add dependency with uv (e.g., make add-python-dotenv)"
+	@echo "  make export      - Export requirements.txt from uv.lock"
+	@echo "  make clean       - Clean artifacts"
 
 install: sync
 sync:
@@ -48,15 +49,18 @@ run-m: check-env
 calibrate:
 	$(UV) run calibrate
 
+test-gesture:
+	$(UV) run python -m mortis.robot
+
 demo: check-env
-	@test -f $(DEMO) || { echo "No existe $(DEMO). Crea un demo o cambia la ruta."; exit 1; }
+	@test -f $(DEMO) || { echo "$(DEMO) does not exist. Create a demo or change the path."; exit 1; }
 	$(UV) run python $(DEMO)
 
 check-env:
-	@test -f $(ENV_FILE) || { echo "Falta $(ENV_FILE) en la raíz."; exit 1; }
+	@test -f $(ENV_FILE) || { echo "$(ENV_FILE) is missing in the root directory."; exit 1; }
 	@set -o allexport; source $(ENV_FILE); set +o allexport; \
 	for v in $(REQUIRED_ENV); do \
-		if [ -z "$${!v}" ]; then echo "Falta variable $$v en $(ENV_FILE) o en el entorno"; exit 1; fi; \
+		if [ -z "$${!v}" ]; then echo "Missing variable $$v in $(ENV_FILE) or environment"; exit 1; fi; \
 	done
 	@echo "✅ MULTIVERSE_COMPACTIFAI_API_KEY in $(ENV_FILE) OK"
 
