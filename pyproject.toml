@@ -1,0 +1,23 @@
+[project]
+name = "mortis"
+version = "0.1.0"
+description = "Mortis: Haunted Control Room 👻🤖 (Gradio demo CompactifAI)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "Jorge Lamperez" }]
+dependencies = [
+  "gradio>=5.49.1",
+  "python-dotenv>=1.2.1",
+  "requests>=2.32.5",
+]
+
+[project.scripts]
+mortis = "mortis.app:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true
