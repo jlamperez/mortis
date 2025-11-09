@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import gradio as gr
 
-from .tools import ask_mortis
+from .tools import ask_mortis, mortis_arm
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -92,6 +92,9 @@ def ui() -> gr.Blocks:
                     include_audio=False,  # sin audio
                 )
                 gr.Markdown("**Webcam (local, no data upload)**\nThe video is only processed in your browser.")
+
+        demo.unload(mortis_arm.disconnect)
+
     return demo
 
 

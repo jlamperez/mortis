@@ -10,8 +10,8 @@ DEMO := examples/demo.py
 ENV_FILE := .env
 REQUIRED_ENV := MULTIVERSE_COMPACTIFAI_API_KEY
 
-# ---------- Metas ----------
-.PHONY: help install sync lock upgrade run run-m demo fmt lint test check-env add-% export clean
+# ---------- Targets ----------
+.PHONY: help install sync lock upgrade run run-m calibrate demo fmt lint test check-env add-% export clean
 
 help:
 	@echo "Comandos:"
@@ -21,6 +21,7 @@ help:
 	@echo "  make upgrade     - Sube versiones y regenera lock"
 	@echo "  make run         - Ejecuta CLI '$(APP)'"
 	@echo "  make run-m       - Ejecuta 'python -m $(MODULE)'"
+	@echo "  make calibrate   - Ejecuta el script de calibración del robot"
 	@echo "  make demo        - Ejecuta $(DEMO)"
 	@echo "  make check-env   - Verifica $(ENV_FILE) y variables requeridas"
 	@echo "  make add-<pkg>   - Añade dependencia con uv (ej: make add-python-dotenv)"
@@ -43,6 +44,9 @@ run: check-env
 
 run-m: check-env
 	$(UV) run python -m $(MODULE)
+
+calibrate:
+	$(UV) run calibrate
 
 demo: check-env
 	@test -f $(DEMO) || { echo "No existe $(DEMO). Crea un demo o cambia la ruta."; exit 1; }

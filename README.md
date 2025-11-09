@@ -69,7 +69,21 @@ uv run python -m mortis.app
 
 Mortis will be available at dark mode in http://127.0.0.1:7860/?__theme=dark
 
-## 🧪 Useful Commands
+## 🤖 Robot Arm Calibration
+
+Before using the robotic arm for the first time, it needs to be calibrated.
+This process sets the initial positions and limits for each motor.
+
+To start the calibration, connect the arm and run:
+
+```bash
+make calibrate
+```
+
+This command executes the `src/mortis/calibrate.py` script, which will guide you through the calibration process.
+Follow the on-screen instructions. The calibration data will be saved in the `.cache/calibration/so101/` directory.
+
+## �🧪 Useful Commands
 
 | Command               | What it does                                                                 |
 |-----------------------|------------------------------------------------------------------------------|
@@ -80,6 +94,7 @@ Mortis will be available at dark mode in http://127.0.0.1:7860/?__theme=dark
 | `make upgrade`        | Upgrades dependencies and regenerates `uv.lock`, then syncs.                 |
 | `make run`            | Runs the CLI entrypoint `$(APP)` (requires `[project.scripts]`).             |
 | `make run-m`          | Runs the app as a module: `python -m $(MODULE)`.                             |
+| `make calibrate`      | Runs the robot arm calibration script.                                       |
 | `make demo`           | Runs the example script at `$(DEMO)`.                                        |
 | `make check-env`      | Verifies `.env` exists and required env vars (e.g., `COMPACTIFAI_API_KEY`).  |
 | `make add-<pkg>`      | Adds a dependency via `uv add` (e.g., `make add-python-dotenv`).             |
