@@ -8,10 +8,13 @@ Each motion of the arm reflects Mortis’s emotions and mood, as if the mechanic
 
 This project explores the haunting intersection of **language, embodiment, and robotics**, blending cutting-edge AI with creative storytelling to build a truly haunted control room 👻🤖.
 
+
 > 📖 For a detailed look into the character and technical architecture, read the **[Project Write-up](WRITEUP.md)**.
 
+## 🎥 [Watch on YouTube](https://youtu.be/mewhuGINpQ8)
 
-![Mortis Demo](assets/image.png)
+
+[![Mortis Demo](assets/image.png)](https://youtu.be/mewhuGINpQ8)
 
 
 ## 🚀 Features
