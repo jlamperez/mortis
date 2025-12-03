@@ -73,7 +73,7 @@ This implementation plan breaks down the Gemini multi-modal refactor into discre
   - Handle audio processing errors gracefully
   - _Requirements: 2.1, 2.5, 11.2_
 
-- [ ] 9. Update Gradio UI for audio output
+- [x] 9. Update Gradio UI for audio output
   - Add `gr.Audio` component for audio playback
   - Implement audio response generation in `mortis_reply()`
   - Configure autoplay for audio responses
