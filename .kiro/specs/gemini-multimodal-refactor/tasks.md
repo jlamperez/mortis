@@ -65,7 +65,7 @@ This implementation plan breaks down the Gemini multi-modal refactor into discre
   - Add local TTS fallback (gTTS) for offline scenarios
   - _Requirements: 8.1, 8.2, 8.4, 8.5_
 
-- [ ] 8. Update Gradio UI for audio input
+- [x] 8. Update Gradio UI for audio input
   - Add `gr.Audio` component for microphone input to `app.py`
   - Implement audio input handler function
   - Connect audio input to STT service

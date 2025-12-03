@@ -7,6 +7,7 @@ from pathlib import Path
 import gradio as gr
 
 from .tools import ask_mortis, mortis_arm
+from .stt_service import STTService, AudioProcessingError
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -18,6 +19,21 @@ MODEL_CHOICES = [
     "gemini-1.5-pro",
     "gemini-1.5-flash",
 ]
+
+# Initialize STT service (global instance)
+stt_service = None
+
+def get_stt_service():
+    """Lazy initialization of STT service."""
+    global stt_service
+    if stt_service is None:
+        try:
+            stt_service = STTService()
+            logging.getLogger(__name__).info("✅ STT service initialized")
+        except Exception as e:
+            logging.getLogger(__name__).error(f"❌ Failed to initialize STT service: {e}")
+            raise
+    return stt_service
 
 
 def build_css(image_path: str) -> str:
@@ -40,6 +56,53 @@ def build_css(image_path: str) -> str:
     opacity: .85;
     }}
     """
+
+
+def process_audio_input(audio_path):
+    """
+    Process audio input from microphone and return transcribed text.
+    
+    Args:
+        audio_path: Path to recorded audio file from Gradio
+        
+    Returns:
+        Transcribed text or error message
+    """
+    logger = logging.getLogger(__name__)
+    
+    if audio_path is None:
+        return ""
+    
+    try:
+        logger.info(f"🎤 Processing audio input: {audio_path}")
+        
+        # Get STT service
+        stt = get_stt_service()
+        
+        # Transcribe audio
+        transcript = stt.transcribe(audio_path)
+        
+        if not transcript:
+            logger.warning("⚠️ Audio transcription returned empty result")
+            return ""
+        
+        logger.info(f"✅ Transcription successful: '{transcript[:50]}...'")
+        return transcript
+        
+    except FileNotFoundError as e:
+        error_msg = f"Audio file not found: {e}"
+        logger.error(f"❌ {error_msg}")
+        return f"[Error: {error_msg}]"
+    
+    except AudioProcessingError as e:
+        error_msg = f"Audio processing failed: {e}"
+        logger.error(f"❌ {error_msg}")
+        return f"[Error: {error_msg}]"
+    
+    except Exception as e:
+        error_msg = f"Unexpected error during transcription: {type(e).__name__}: {e}"
+        logger.error(f"❌ {error_msg}")
+        return f"[Error: {error_msg}]"
 
 
 def mortis_reply(message, history, model_name):
@@ -73,12 +136,68 @@ def ui() -> gr.Blocks:
                     info="Select Gemini model for Mortis",
                     interactive=True,
                 )
-                gr.ChatInterface(
+                
+                # Audio input component for voice interaction
+                with gr.Row():
+                    audio_input = gr.Audio(
+                        sources=["microphone"],
+                        type="filepath",
+                        label="🎤 Speak to Mortis",
+                        show_label=True,
+                        interactive=True,
+                        waveform_options=gr.WaveformOptions(
+                            show_controls=False,
+                        ),
+                    )
+                
+                # Transcription display for user confirmation
+                transcription_display = gr.Textbox(
+                    label="Transcribed Text",
+                    placeholder="Your transcribed speech will appear here...",
+                    interactive=False,
+                    visible=True,
+                    lines=2,
+                )
+                
+                # Chat interface
+                chat_interface = gr.ChatInterface(
                     fn=mortis_reply,
                     additional_inputs=[model_dd],
-                    chatbot=gr.Chatbot(height=480, label="Mortis chat", type="messages"),
-                    textbox=gr.Textbox(placeholder="Write your message here…"),
+                    chatbot=gr.Chatbot(height=380, label="Mortis chat", type="messages"),
+                    textbox=gr.Textbox(placeholder="Write your message here or use voice input above…"),
                     submit_btn="Send",
+                )
+                
+                # Connect audio input to transcription display and chat
+                def handle_audio_and_submit(audio_path, history, model_name):
+                    """Handle audio input: transcribe and submit to chat."""
+                    if audio_path is None:
+                        return "", history
+                    
+                    # Transcribe audio
+                    transcript = process_audio_input(audio_path)
+                    
+                    # If transcription successful and not an error, submit to chat
+                    if transcript and not transcript.startswith("[Error:"):
+                        # Add user message to history
+                        history.append({"role": "user", "content": transcript})
+                        
+                        # Get Mortis reply
+                        response = mortis_reply(transcript, history, model_name)
+                        
+                        # Add assistant response to history
+                        history.append({"role": "assistant", "content": response})
+                        
+                        return transcript, history
+                    else:
+                        # Show error in transcription display
+                        return transcript, history
+                
+                # Wire up audio input to trigger transcription and chat submission
+                audio_input.stop_recording(
+                    fn=handle_audio_and_submit,
+                    inputs=[audio_input, chat_interface.chatbot, model_dd],
+                    outputs=[transcription_display, chat_interface.chatbot],
                 )
 
             with gr.Column():

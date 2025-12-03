@@ -204,8 +204,22 @@ class STTService:
             )
             
             # Extract transcribed text
-            transcript = response.text.strip()
-            logger.info(f"Gemini transcription successful: '{transcript[:50]}...'")
+            if response.text is None:
+                logger.warning("Gemini returned None for transcription")
+                logger.debug(f"Response object: {response}")
+                # Check if there are candidates with parts
+                if hasattr(response, 'candidates') and response.candidates:
+                    logger.debug(f"Response has {len(response.candidates)} candidates")
+                    for i, candidate in enumerate(response.candidates):
+                        logger.debug(f"Candidate {i}: {candidate}")
+                transcript = ""
+            else:
+                transcript = response.text.strip()
+            
+            if transcript:
+                logger.info(f"Gemini transcription successful: '{transcript[:50]}...'")
+            else:
+                logger.warning("Gemini transcription returned empty result")
             
             # Clean up uploaded file
             try:
