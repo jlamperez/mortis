@@ -96,6 +96,21 @@ class GeminiAPIError(Exception):
     pass
 
 
+class GeminiRateLimitError(GeminiAPIError):
+    """Exception raised when rate limit is exceeded."""
+    pass
+
+
+class GeminiBlockedPromptError(GeminiAPIError):
+    """Exception raised when prompt is blocked by safety filters."""
+    pass
+
+
+class GeminiTimeoutError(GeminiAPIError):
+    """Exception raised when API call times out."""
+    pass
+
+
 class GeminiClient:
     """
     Client for interacting with Google Gemini API.
@@ -109,7 +124,8 @@ class GeminiClient:
         api_key: Optional[str] = None,
         model_name: Optional[str] = None,
         temperature: Optional[float] = None,
-        max_retries: int = 3
+        max_retries: int = 3,
+        timeout: float = 30.0
     ):
         """
         Initialize Gemini API client.
@@ -119,6 +135,7 @@ class GeminiClient:
             model_name: Gemini model to use (defaults to GEMINI_MODEL env var or gemini-2.0-flash-exp)
             temperature: Sampling temperature (defaults to GEMINI_TEMPERATURE env var or 0.2)
             max_retries: Maximum number of retry attempts for rate limiting
+            timeout: Timeout in seconds for API calls (default: 30.0)
         """
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         if not self.api_key:
@@ -127,6 +144,7 @@ class GeminiClient:
         self.model_name = model_name or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
         self.temperature = temperature if temperature is not None else float(os.getenv("GEMINI_TEMPERATURE", "0.2"))
         self.max_retries = max_retries
+        self.timeout = timeout
         
         # Initialize Gemini client
         self.client = genai.Client(api_key=self.api_key)
@@ -137,11 +155,11 @@ class GeminiClient:
             response_mime_type="application/json"
         )
         
-        logger.info(f"GeminiClient initialized with model: {self.model_name}, temperature: {self.temperature}")
+        logger.info(f"GeminiClient initialized with model: {self.model_name}, temperature: {self.temperature}, timeout: {self.timeout}s")
     
     def send_message(self, user_input: str, system_prompt: Optional[str] = None) -> dict:
         """
-        Send a message to Gemini API with retry logic.
+        Send a message to Gemini API with retry logic and error handling.
         
         Args:
             user_input: User's message text
@@ -151,13 +169,30 @@ class GeminiClient:
             Parsed JSON response from Gemini
             
         Raises:
-            GeminiAPIError: If all retry attempts fail
+            GeminiAPIError: If all retry attempts fail (only for critical errors)
         """
         # Use Mortis system prompt by default
         if system_prompt is None:
             system_prompt = MORTIS_SYSTEM_PROMPT
         
-        return self._send_message_with_retry(user_input, system_prompt, retry_count=0)
+        try:
+            return self._send_message_with_retry(user_input, system_prompt, retry_count=0)
+        except GeminiBlockedPromptError as e:
+            # Handle blocked prompts with a fallback response
+            logger.warning(f"Blocked prompt error: {e}")
+            return self._get_fallback_response("The spirits refuse to speak of such things...")
+        except GeminiRateLimitError as e:
+            # Rate limit exceeded after all retries
+            logger.error(f"Rate limit error: {e}")
+            return self._get_fallback_response("Too many spirits summoned at once... wait a moment.")
+        except GeminiTimeoutError as e:
+            # Timeout error
+            logger.error(f"Timeout error: {e}")
+            return self._get_fallback_response("The spirits are slow to respond... try again.")
+        except Exception as e:
+            # Catch-all for unexpected errors
+            logger.error(f"Unexpected error in send_message: {type(e).__name__}: {e}", exc_info=True)
+            return self._get_fallback_response("The spirits are confused... try again.")
     
     def _send_message_with_retry(
         self,
@@ -179,6 +214,8 @@ class GeminiClient:
         Raises:
             GeminiAPIError: If max retries exceeded
         """
+        start_time = time.time()
+        
         try:
             # Construct the full prompt
             if system_prompt:
@@ -186,8 +223,14 @@ class GeminiClient:
             else:
                 full_prompt = user_input
             
-            # Send request to Gemini using new API
-            logger.debug(f"Sending message to Gemini (attempt {retry_count + 1})")
+            # Send request to Gemini using new API with timeout
+            logger.debug(f"Sending message to Gemini (attempt {retry_count + 1}/{self.max_retries + 1})")
+            
+            # Check if we've exceeded timeout
+            if time.time() - start_time > self.timeout:
+                logger.error(f"API call timeout exceeded ({self.timeout}s)")
+                raise GeminiTimeoutError(f"API call timeout exceeded ({self.timeout}s)")
+            
             response = self.client.models.generate_content(
                 model=self.model_name,
                 contents=full_prompt,
@@ -196,51 +239,127 @@ class GeminiClient:
             
             # Parse JSON response
             response_text = response.text.strip()
-            logger.debug(f"Received response: {response_text}")
+            elapsed_time = time.time() - start_time
+            logger.debug(f"Received response in {elapsed_time:.2f}s: {response_text[:100]}...")
             
             try:
                 response_json = json.loads(response_text)
+                logger.info(f"Successfully parsed response (type: {response_json.get('type', 'unknown')})")
                 return response_json
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse JSON response: {e}")
                 logger.error(f"Response text: {response_text}")
-                return self._get_fallback_response()
+                logger.warning("Returning fallback response due to JSON parse error")
+                return self._get_fallback_response("The spirits speak in riddles... try again.")
+        
+        except GeminiTimeoutError as e:
+            # Timeout error - return fallback
+            logger.error(f"Timeout error: {e}")
+            return self._get_fallback_response("The spirits are slow to respond... try again.")
         
         except Exception as e:
             # Check for specific error types
             error_type = type(e).__name__
+            error_message = str(e)
             
             # Handle blocked prompt (safety filter)
-            if "BlockedPrompt" in error_type or "blocked" in str(e).lower():
-                logger.warning(f"Prompt blocked by safety filter: {e}")
-                return self._get_fallback_response()
+            if "BlockedPrompt" in error_type or "blocked" in error_message.lower() or "safety" in error_message.lower():
+                logger.warning(f"Prompt blocked by safety filter: {error_type}: {error_message}")
+                raise GeminiBlockedPromptError(f"Prompt blocked by safety filter: {error_message}") from e
             
-            # Handle rate limiting with retry
-            if "RateLimit" in error_type or "ResourceExhausted" in error_type or "429" in str(e):
+            # Handle rate limiting with exponential backoff retry
+            if self._is_rate_limit_error(e):
                 if retry_count < self.max_retries:
-                    wait_time = 2 ** retry_count  # Exponential backoff: 1s, 2s, 4s
-                    logger.warning(f"Rate limited. Retrying in {wait_time}s... (attempt {retry_count + 1}/{self.max_retries})")
+                    wait_time = (2 ** retry_count)  # Exponential backoff: 1s, 2s, 4s, 8s
+                    logger.warning(
+                        f"Rate limit exceeded. Retrying in {wait_time}s... "
+                        f"(attempt {retry_count + 1}/{self.max_retries})"
+                    )
                     time.sleep(wait_time)
                     return self._send_message_with_retry(user_input, system_prompt, retry_count + 1)
                 else:
-                    logger.error("Max retries exceeded for rate limit")
-                    raise GeminiAPIError("Max retries exceeded for rate limit") from e
+                    logger.error(f"Max retries ({self.max_retries}) exceeded for rate limit")
+                    raise GeminiRateLimitError(
+                        f"Rate limit exceeded after {self.max_retries} retries. Please try again later."
+                    ) from e
             
-            # Handle other errors
-            logger.error(f"Gemini API error: {error_type}: {e}")
-            return self._get_fallback_response()
+            # Handle timeout errors from Google API
+            if self._is_timeout_error(e):
+                logger.error(f"API timeout error: {error_type}: {error_message}")
+                return self._get_fallback_response("The spirits are slow to respond... try again.")
+            
+            # Handle other API errors
+            logger.error(f"Gemini API error: {error_type}: {error_message}", exc_info=True)
+            return self._get_fallback_response("The spirits are restless... try again.")
     
-    def _get_fallback_response(self) -> dict:
+    def _is_rate_limit_error(self, exception: Exception) -> bool:
+        """
+        Check if exception is a rate limit error.
+        
+        Args:
+            exception: Exception to check
+            
+        Returns:
+            True if rate limit error, False otherwise
+        """
+        error_type = type(exception).__name__
+        error_message = str(exception).lower()
+        
+        # Check for common rate limit indicators
+        rate_limit_indicators = [
+            "ratelimit",
+            "rate_limit",
+            "resourceexhausted",
+            "resource_exhausted",
+            "429",
+            "quota",
+            "too many requests"
+        ]
+        
+        return any(indicator in error_type.lower() or indicator in error_message 
+                   for indicator in rate_limit_indicators)
+    
+    def _is_timeout_error(self, exception: Exception) -> bool:
+        """
+        Check if exception is a timeout error.
+        
+        Args:
+            exception: Exception to check
+            
+        Returns:
+            True if timeout error, False otherwise
+        """
+        error_type = type(exception).__name__
+        error_message = str(exception).lower()
+        
+        # Check for common timeout indicators
+        timeout_indicators = [
+            "timeout",
+            "deadline",
+            "deadlineexceeded",
+            "deadline_exceeded"
+        ]
+        
+        return any(indicator in error_type.lower() or indicator in error_message 
+                   for indicator in timeout_indicators)
+    
+    def _get_fallback_response(self, message: Optional[str] = None) -> dict:
         """
         Return a safe fallback response when API fails.
+        
+        Args:
+            message: Optional custom message (defaults to generic error message)
         
         Returns:
             Dictionary with fallback conversation response
         """
-        logger.info("Returning fallback response")
+        default_message = "The spirits are restless... try again."
+        fallback_message = message or default_message
+        
+        logger.info(f"Returning fallback response: {fallback_message}")
         return {
             "type": "conversation",
-            "message": "The spirits are restless... try again.",
+            "message": fallback_message,
             "mood": "ominous",
             "gesture": "idle"
         }
