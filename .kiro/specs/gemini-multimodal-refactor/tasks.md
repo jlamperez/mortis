@@ -49,7 +49,7 @@ This implementation plan breaks down the Gemini multi-modal refactor into discre
 
 ## Phase 2: Voice Input and Output
 
-- [ ] 6. Implement Speech-to-Text service
+- [x] 6. Implement Speech-to-Text service
   - Create `src/mortis/stt_service.py` module
   - Implement `STTService` class with Gemini native audio support
   - Add fallback to Google Cloud Speech-to-Text API
