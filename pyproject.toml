@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "Jorge Lamperez" }]
 dependencies = [
+  "google-genai>=1.53.0",
   "gradio>=5.49.1",
   "lerobot[async,feetech,intelrealsense,smolvla]>=0.4.0",
   "python-dotenv>=1.2.1",

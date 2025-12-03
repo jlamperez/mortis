@@ -71,7 +71,7 @@ def ask_mortis(user_msg: str, model_name:str):
         # print(message or "...")
         # print(json.dumps({"mood": mood, "gesture": gesture}, ensure_ascii=False))
         # Move the arm according to the gesture received.
-        mortis_arm.move_arm(gesture)
+        # mortis_arm.move_arm(gesture)
 
         return message, mood, gesture
 
