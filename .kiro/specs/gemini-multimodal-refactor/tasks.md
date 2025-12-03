@@ -81,7 +81,7 @@ This implementation plan breaks down the Gemini multi-modal refactor into discre
   - Implement audio file cleanup mechanism
   - _Requirements: 8.3, 8.4_
 
-- [ ] 10. Integrate voice flow with Gemini
+- [x] 10. Integrate voice flow with Gemini
   - Update `ask_mortis()` to accept audio input
   - Implement voice-to-text-to-Gemini-to-TTS pipeline
   - Maintain text input compatibility

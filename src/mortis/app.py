@@ -135,41 +135,47 @@ def mortis_reply(message, history, model_name):
     return msg
 
 
-def mortis_reply_with_audio(message, history, model_name):
+def mortis_reply_with_audio(message, history, model_name, audio_input_path=None):
     """
     Generate Mortis reply with both text and audio output.
     
+    Supports both text and voice input through the unified voice pipeline.
+    
     Args:
-        message: User message text
+        message: User message text (optional if audio_input_path provided)
         history: Chat history
         model_name: Gemini model to use
+        audio_input_path: Optional path to audio input file
         
     Returns:
         Tuple of (text_response, audio_path)
     """
     logger = logging.getLogger(__name__)
-    logger.info(f"💬 User message: {message[:50]}{'...' if len(message) > 50 else ''}")
+    
+    # Import the voice-integrated function
+    from .tools import ask_mortis_with_voice
+    
+    # Log input type
+    if audio_input_path:
+        logger.info(f"🎤 Voice input: {audio_input_path}")
+    else:
+        logger.info(f"💬 Text input: {message[:50]}{'...' if len(message) > 50 else ''}")
+    
     logger.info(f"🤖 Using model: {model_name}")
     
-    # Get text response from Gemini
-    msg, mood, gesture = ask_mortis(message, model_name=model_name)
+    # Use the complete voice pipeline
+    msg, mood, gesture, audio_path = ask_mortis_with_voice(
+        user_msg=message,
+        model_name=model_name,
+        audio_path=audio_input_path,
+        generate_audio=True
+    )
     
     logger.info(f"👻 Mortis reply: {msg[:50]}{'...' if len(msg) > 50 else ''}")
     logger.info(f"😈 Mood: {mood}, Gesture: {gesture}")
     
-    # Generate audio response
-    audio_path = None
-    try:
-        tts = get_tts_service_instance()
-        audio_path = tts.synthesize(msg)
-        
-        if audio_path:
-            logger.info(f"🔊 Audio generated: {audio_path}")
-        else:
-            logger.warning("⚠️ Audio generation returned None")
-    except Exception as e:
-        logger.error(f"❌ Failed to generate audio: {e}")
-        # Continue without audio - text response is still valid
+    if audio_path:
+        logger.info(f"🔊 Audio output: {audio_path}")
     
     return msg, audio_path
 
@@ -224,18 +230,21 @@ def ui() -> gr.Blocks:
                     show_label=True,
                 )
                 
+                # State to store the latest audio path
+                audio_state = gr.State(value=None)
+                
                 # Custom wrapper to add audio output to chat responses
-                def mortis_reply_wrapper(message, history, model_name):
-                    """Wrapper that generates both text and audio, but returns only text for ChatInterface."""
+                def mortis_reply_wrapper(message, history, model_name, audio_state_value):
+                    """Wrapper that generates both text and audio."""
                     text_response, audio_path = mortis_reply_with_audio(message, history, model_name)
-                    # Store audio path in a way that can be accessed by the audio output component
-                    # ChatInterface expects only text return, so we'll handle audio separately
-                    return text_response
+                    # Return text for chat and audio path for state
+                    return text_response, audio_path
                 
                 # Chat interface
                 chat_interface = gr.ChatInterface(
                     fn=mortis_reply_wrapper,
-                    additional_inputs=[model_dd],
+                    additional_inputs=[model_dd, audio_state],
+                    additional_outputs=[audio_state],
                     chatbot=gr.Chatbot(height=380, label="Mortis chat", type="messages"),
                     textbox=gr.Textbox(placeholder="Write your message here or use voice input above…"),
                     submit_btn="Send",
@@ -247,24 +256,30 @@ def ui() -> gr.Blocks:
                     if audio_path is None:
                         return "", history, None
                     
-                    # Transcribe audio
+                    logger = logging.getLogger(__name__)
+                    logger.info(f"🎤 Handling audio input: {audio_path}")
+                    
+                    # First, get the transcription for display
                     transcript = process_audio_input(audio_path)
                     
-                    # If transcription successful and not an error, submit to chat
-                    if transcript and not transcript.startswith("[Error:"):
-                        # Add user message to history
-                        history.append({"role": "user", "content": transcript})
-                        
-                        # Get Mortis reply with audio
-                        response_text, response_audio = mortis_reply_with_audio(transcript, history, model_name)
-                        
-                        # Add assistant response to history
-                        history.append({"role": "assistant", "content": response_text})
-                        
-                        return transcript, history, response_audio
-                    else:
-                        # Show error in transcription display
+                    # If transcription failed, return error
+                    if not transcript or transcript.startswith("[Error:"):
                         return transcript, history, None
+                    
+                    # Now use the transcribed text to get Mortis response with audio
+                    # We pass the transcript as text, not the audio file, to avoid double transcription
+                    response_text, response_audio = mortis_reply_with_audio(
+                        message=transcript,  # Use the transcribed text
+                        history=history,
+                        model_name=model_name,
+                        audio_input_path=None  # Don't pass audio since we already transcribed
+                    )
+                    
+                    # Update chat history
+                    history.append({"role": "user", "content": transcript})
+                    history.append({"role": "assistant", "content": response_text})
+                    
+                    return transcript, history, response_audio
                 
                 # Wire up audio input to trigger transcription and chat submission
                 audio_input.stop_recording(
@@ -273,22 +288,11 @@ def ui() -> gr.Blocks:
                     outputs=[transcription_display, chat_interface.chatbot, audio_output],
                 )
                 
-                # Wire up text chat submit to also generate audio
-                def handle_text_submit_with_audio(message, history, model_name):
-                    """Handle text input and generate audio response."""
-                    if not message or not message.strip():
-                        return None
-                    
-                    # Get audio response (text is already handled by ChatInterface)
-                    _, audio_path = mortis_reply_with_audio(message, history, model_name)
-                    
-                    return audio_path
-                
-                # Connect text submission to audio output
-                # Note: ChatInterface handles the submit internally, we just add audio output
-                chat_interface.textbox.submit(
-                    fn=handle_text_submit_with_audio,
-                    inputs=[chat_interface.textbox, chat_interface.chatbot, model_dd],
+                # Connect audio state changes to audio output
+                # This ensures audio plays whenever the state is updated by ChatInterface
+                audio_state.change(
+                    fn=lambda x: x,  # Pass through the audio path
+                    inputs=[audio_state],
                     outputs=[audio_output],
                 )
 
