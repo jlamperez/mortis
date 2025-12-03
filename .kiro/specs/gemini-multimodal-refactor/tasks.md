@@ -11,7 +11,7 @@ This implementation plan breaks down the Gemini multi-modal refactor into discre
   - Implement basic `send_message()` method using `google.generativeai` SDK
   - _Requirements: 1.1, 1.2, 1.3_
 
-- [ ] 2. Implement structured response parsing
+- [x] 2. Implement structured response parsing
   - Create `src/mortis/models.py` for data models
   - Implement `GeminiResponse`, `ResponseType`, `Mood`, `Gesture` enums and dataclasses
   - Add `from_json()` method for parsing Gemini JSON responses
