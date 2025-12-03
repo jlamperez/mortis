@@ -18,7 +18,7 @@ This implementation plan breaks down the Gemini multi-modal refactor into discre
   - Implement response validation logic
   - _Requirements: 1.1, 3.5_
 
-- [ ] 3. Design and implement Gemini system prompt
+- [x] 3. Design and implement Gemini system prompt
   - Create system prompt with Mortis character definition
   - Add manipulation task definitions (6 tasks) to prompt
   - Implement JSON response format specification in prompt
