@@ -1,82 +1,143 @@
-import os
-import json
-import requests
+"""
+LLM integration for Mortis conversational AI.
 
-from pathlib import Path
-from dotenv import load_dotenv
+This module provides the ask_mortis() function that integrates with the Gemini API
+to generate character-driven responses and coordinate gesture execution.
+"""
+
+import logging
+from typing import Tuple
 
 from .robot import MortisArm
+from .gemini_client import GeminiClient
+from .models import GeminiResponse
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-load_dotenv(REPO_ROOT / ".env")
+# Configure logging
+logger = logging.getLogger(__name__)
 
-API_KEY = os.getenv("API_KEY")
-API_BASE_URL = os.getenv("API_BASE_URL", "https://api.example.com/v1/chat/completions")
-
+# Global instances
 mortis_arm = MortisArm()
+gemini_client = None  # Lazy initialization
 
-SYSTEM = (
-"You are Mortis, a mischievous Halloween spirit in a robotic arm. "
-"Return structured outputs via function call when available."
-)
 
-TOOLS = [{
-  "type":"function",
-  "function":{
-    "name":"perform_mortis_act",
-    "description":"Return Mortis output in a structured way.",
-    "parameters":{
-      "type":"object",
-      "properties":{
-        "message":{"type":"string","maxLength":120,
-                   "description":"One in-character line, <=30 words, no emojis/markdown."},
-        "mood":{"type":"string","enum":["ominous","playful","angry","nervous","triumphant","mischievous","sinister","curious","neutral"]},
-        "gesture":{"type":"string","enum": ["idle", "wave", "point_left", "point_right", "grab", "drop"]}
-      },
-      "required":["message","mood","gesture"],
-      "additionalProperties": False
-    }
-  }
-}]
+def _get_gemini_client() -> GeminiClient:
+    """
+    Get or create the global GeminiClient instance.
+    
+    Returns:
+        GeminiClient instance
+    """
+    global gemini_client
+    if gemini_client is None:
+        gemini_client = GeminiClient()
+        logger.info("GeminiClient initialized")
+    return gemini_client
 
-def ask_mortis(user_msg: str, model_name:str):
 
+def ask_mortis(user_msg: str, model_name: str = None) -> Tuple[str, str, str]:
+    """
+    Send user message to Gemini API and get Mortis response with gesture.
+    
+    This function:
+    1. Connects to the robot arm if not already connected
+    2. Sends the user message to Gemini API
+    3. Parses the structured JSON response
+    4. Returns message, mood, and gesture for execution
+    
+    Args:
+        user_msg: User's input message
+        model_name: Optional Gemini model name (uses default from env if not provided)
+        
+    Returns:
+        Tuple of (message, mood, gesture) where:
+            - message: Text response from Mortis
+            - mood: Emotional mood (e.g., "ominous", "playful")
+            - gesture: Gesture to execute (e.g., "wave", "idle")
+            
+    Note:
+        This function maintains backward compatibility with the previous API.
+        The gesture is returned but not automatically executed - the caller
+        is responsible for executing the gesture via mortis_arm.move_arm().
+    """
+    # Ensure robot is connected
     if not mortis_arm.connected:
-        mortis_arm.connect()
-
-    print(f"Asking Mortis (model: {model_name})...")
-    headers = {"Content-Type":"application/json","Authorization":f"Bearer {API_KEY}"}
-    data = {
-        "model": model_name,
-        "messages": [
-            {"role":"system","content": SYSTEM},
-            {"role":"user","content": user_msg}
-        ],
-        "tools": TOOLS,
-        "tool_choice": {"type":"function","function":{"name":"perform_mortis_act"}},
-        "temperature": 0.2
-    }
-    r = requests.post(API_BASE_URL, headers=headers, json=data, timeout=30)
-    r.raise_for_status()
-    choice = r.json()["choices"][0]["message"]
-
-    tcalls = choice.get("tool_calls") or []
-    if tcalls:
-        args = json.loads(tcalls[0]["function"]["arguments"])
-        message = (args.get("message") or "").strip()
-        mood = (args.get("mood") or "ominous").strip()
-        gesture = (args.get("gesture") or "idle").strip()
-
-        # print("=== Mortis says ===")
-        # print(message or "...")
-        # print(json.dumps({"mood": mood, "gesture": gesture}, ensure_ascii=False))
-        # Move the arm according to the gesture received.
-        # mortis_arm.move_arm(gesture)
-
+        try:
+            mortis_arm.connect()
+            logger.info("Robot arm connected")
+        except Exception as e:
+            logger.error(f"Failed to connect to robot arm: {e}")
+            # Continue anyway - we can still generate responses
+    
+    # Get Gemini client
+    client = _get_gemini_client()
+    
+    # Reconfigure model if specified
+    if model_name:
+        client.configure_model(model_name=model_name)
+        logger.info(f"Using Gemini model: {model_name}")
+    
+    # Send message to Gemini
+    logger.info(f"Asking Mortis: {user_msg[:50]}...")
+    response_json = client.send_message(user_msg)
+    
+    # Parse response using GeminiResponse model
+    try:
+        response = GeminiResponse.from_json(response_json)
+        
+        # Extract fields for backward compatibility
+        message = response.message
+        mood = response.mood.value
+        
+        # For conversation type, return gesture
+        # For manipulation type, return "idle" as gesture (manipulation handled separately)
+        if response.gesture:
+            gesture = response.gesture.value
+        else:
+            gesture = "idle"
+        
+        logger.info(f"Mortis responds (type: {response.type.value}, mood: {mood}, gesture: {gesture})")
+        
         return message, mood, gesture
+        
+    except (ValueError, KeyError) as e:
+        # If parsing fails, return safe defaults
+        logger.error(f"Failed to parse Gemini response: {e}")
+        logger.error(f"Response JSON: {response_json}")
+        
+        # Return fallback response
+        return "The spirits are confused... try again.", "ominous", "idle"
+
 
 
 if __name__ == "__main__":
-    ask_mortis("Mortis, someone is entering the lab… act!")
-    ask_mortis("Introduce yourself with a sinister bow.")
-    ask_mortis("Grab the cursed vial and then release it.")
+    # Configure logging for testing
+    logging.basicConfig(level=logging.INFO)
+    
+    # Test conversational interactions
+    print("=== Test 1: Greeting ===")
+    message, mood, gesture = ask_mortis("Mortis, someone is entering the lab… act!")
+    print(f"Message: {message}")
+    print(f"Mood: {mood}")
+    print(f"Gesture: {gesture}")
+    print()
+    
+    print("=== Test 2: Introduction ===")
+    message, mood, gesture = ask_mortis("Introduce yourself with a sinister bow.")
+    print(f"Message: {message}")
+    print(f"Mood: {mood}")
+    print(f"Gesture: {gesture}")
+    print()
+    
+    print("=== Test 3: Action sequence ===")
+    message, mood, gesture = ask_mortis("Grab the cursed vial and then release it.")
+    print(f"Message: {message}")
+    print(f"Mood: {mood}")
+    print(f"Gesture: {gesture}")
+    print()
+    
+    print("=== Test 4: Manipulation command ===")
+    message, mood, gesture = ask_mortis("Can you move the skull to the green cup?")
+    print(f"Message: {message}")
+    print(f"Mood: {mood}")
+    print(f"Gesture: {gesture}")
+    print()

@@ -32,7 +32,7 @@ This implementation plan breaks down the Gemini multi-modal refactor into discre
   - Add error logging and user-friendly error messages
   - _Requirements: 1.4, 11.1_
 
-- [ ] 5. Replace existing LLM API in tools.py
+- [x] 5. Replace existing LLM API in tools.py
   - Refactor `ask_mortis()` function to use `GeminiClient`
   - Update response parsing to use new data models
   - Maintain backward compatibility with gesture execution

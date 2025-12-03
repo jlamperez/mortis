@@ -4,7 +4,7 @@
 At its core, Mortis connects to a powerful **Large Language Model (LLM)**, giving life to a ghostly digital entity that speaks, feels, and acts.
 
 As you converse with Mortis, its responses are not limited to text — the spirit manifests itself through a **SeeedStudio SO101 robotic arm**, whose gestures are controlled via the **[LeRobot](https://huggingface.co/lerobot)** framework from Hugging Face.
-Each motion of the arm reflects Mortis’s emotions and mood, as if the mechanical limb were **possessed** — transforming AI intent into tangible, spectral movement.
+Each motion of the arm reflects Mortis's emotions and mood, as if the mechanical limb were **possessed** — transforming AI intent into tangible, spectral movement.
 
 This project explores the haunting intersection of **language, embodiment, and robotics**, blending cutting-edge AI with creative storytelling to build a truly haunted control room 👻🤖.
 
@@ -19,7 +19,7 @@ This project explores the haunting intersection of **language, embodiment, and r
 ## 🚀 Features
 
 - Web UI with a custom Halloween background 🎃
-- Chat with LLM models via API
+- Chat with Gemini AI models via Google's Gemini API
 - Secure `.env` environment variable loading
 - Dependency management with [`uv`](https://github.com/astral-sh/uv)
 - Developer-friendly `Makefile` shortcuts
@@ -46,14 +46,34 @@ uv sync
 
 ## 🔑 Environment Setup
 
-Create a .env file in the project root:
+Create a `.env` file in the project root with your Gemini API credentials:
 
 ```bash
-API_KEY=your_api_key_here
-API_BASE_URL=https://api.example.com/v1/chat/completions
+# Required: Get your API key from https://aistudio.google.com/app/apikey
+GEMINI_API_KEY=your_google_api_key_here
+
+# Optional: Customize model and settings (defaults shown)
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_TEMPERATURE=0.2
+ROBOT_PORT=/dev/ttyACM1
+PORT=7860
 ```
 
-(Do not commit .env; it’s already ignored in .gitignore)
+You can copy the example file and edit it:
+
+```bash
+cp .env.example .env
+# Then edit .env with your actual API key
+```
+
+**Note:** The `.env` file is already in `.gitignore` and will not be committed to version control.
+
+### Getting a Gemini API Key
+
+1. Visit [Google AI Studio](https://aistudio.google.com/app/apikey)
+2. Sign in with your Google account
+3. Click "Create API Key"
+4. Copy the key and paste it into your `.env` file
 
 ## 🕹️ Run Mortis
 
@@ -143,7 +163,7 @@ if __name__ == "__main__":
 | `make calibrate`      | Runs the robot arm calibration script.                                       |
 | `make demo`           | Runs the example script at `$(DEMO)`.                                        |
 | `make test-gesture`   | Executes a test gesture with the robotic arm (`mortis.robot`).               |
-| `make check-env`      | Verifies `.env` exists and required env vars (e.g., `API_KEY`).              |
+| `make check-env`      | Verifies `.env` exists and required env vars (e.g., `GEMINI_API_KEY`).       |
 | `make add-<pkg>`      | Adds a dependency via `uv add` (e.g., `make add-python-dotenv`).             |
 | `make export`         | Exports pinned deps to `requirements.txt` from `uv.lock`.                    |
 | `make clean`          | Removes build/test caches and artifacts.

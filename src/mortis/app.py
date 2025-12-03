@@ -12,12 +12,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 BG_IMAGE = REPO_ROOT / "assets" / "kiroween.png"
 
 MODEL_CHOICES = [
-    "cai-llama-3-1-8b-slim",
-    "cai-llama-3-1-8b-slim-r",
-    "cai-llama-3-3-70b-slim",
-    "cai-llama-4-scout-slim",
-    # "gpt-oss-20b", # No Tools
-    # "gpt-oss-120b" # No Tools
+    "gemini-2.5-flash",
+    "gemini-2.0-flash-exp",
+    "gemini-1.5-pro",
+    "gemini-1.5-flash",
 ]
 
 
@@ -62,8 +60,8 @@ def ui() -> gr.Blocks:
                 model_dd = gr.Dropdown(
                     choices=MODEL_CHOICES,
                     value=MODEL_CHOICES[0],
-                    label="LLM model",
-                    info="Select Mortis LLM model",
+                    label="Gemini Model",
+                    info="Select Gemini model for Mortis",
                     interactive=True,
                 )
                 gr.ChatInterface(

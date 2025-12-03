@@ -8,7 +8,7 @@ DEMO := examples/demo.py
 
 # Environment variables
 ENV_FILE := .env
-REQUIRED_ENV := API_KEY
+REQUIRED_ENV := GEMINI_API_KEY
 
 # ---------- Targets ----------
 .PHONY: help install sync lock upgrade run run-m calibrate test-gesture demo fmt lint test check-env add-% export clean
@@ -62,7 +62,7 @@ check-env:
 	for v in $(REQUIRED_ENV); do \
 		if [ -z "$${!v}" ]; then echo "Missing variable $$v in $(ENV_FILE) or environment"; exit 1; fi; \
 	done
-	@echo "✅ API_KEY in $(ENV_FILE) OK"
+	@echo "✅ GEMINI_API_KEY in $(ENV_FILE) OK"
 
 add-%:
 	$(UV) add $*
