@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import logging
 
 from pathlib import Path
 import gradio as gr
@@ -42,7 +43,15 @@ def build_css(image_path: str) -> str:
 
 
 def mortis_reply(message, history, model_name):
+    logger = logging.getLogger(__name__)
+    logger.info(f"💬 User message: {message[:50]}{'...' if len(message) > 50 else ''}")
+    logger.info(f"🤖 Using model: {model_name}")
+    
     msg, mood, gesture = ask_mortis(message, model_name=model_name)
+    
+    logger.info(f"👻 Mortis reply: {msg[:50]}{'...' if len(msg) > 50 else ''}")
+    logger.info(f"😈 Mood: {mood}, Gesture: {gesture}")
+    
     return msg
 
 
@@ -87,5 +96,30 @@ def ui() -> gr.Blocks:
 
 
 def main():
+    # Configure logging - force configuration even if already set
+    log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+    
+    # Remove existing handlers and reconfigure
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+    
+    # Set up new handler with our format
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%H:%M:%S'
+    ))
+    root_logger.addHandler(handler)
+    root_logger.setLevel(getattr(logging, log_level))
+    
+    logger = logging.getLogger(__name__)
+    logger.info("=" * 60)
+    logger.info("🎃 Starting Mortis application...")
+    logger.info(f"📊 Log level: {log_level}")
+    
     port = int(os.getenv("PORT", "7860"))
+    logger.info(f"🌐 Launching on http://127.0.0.1:{port}")
+    logger.info("=" * 60)
+    
     ui().launch(server_name="127.0.0.1", server_port=port, show_error=True,)

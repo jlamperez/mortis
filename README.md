@@ -93,6 +93,17 @@ uv run python -m mortis.app
 
 Mortis will be available at dark mode in http://127.0.0.1:7860/?__theme=dark
 
+### Viewing Logs
+
+By default, you'll see INFO-level logs in your terminal showing what Mortis is doing. To see more detailed logs (including Gemini API calls), set the log level in your `.env` file:
+
+```bash
+# In .env file
+LOG_LEVEL=DEBUG  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+```
+
+For more details, see the [Logging Guide](docs/LOGGING_GUIDE.md).
+
 ## 💬 Talking to Mortis
 
 Once Mortis is running, you can interact with it using natural language. Here are a few examples to get you started and see the arm in action:
