@@ -8,7 +8,9 @@ license = "MIT"
 authors = [{ name = "Jorge Lamperez" }]
 dependencies = [
   "google-genai>=1.53.0",
+  "google-cloud-texttospeech>=2.16.0",
   "gradio>=5.49.1",
+  "gtts>=2.5.0",
   "lerobot[async,feetech,intelrealsense,smolvla]>=0.4.0",
   "python-dotenv>=1.2.1",
   "requests>=2.32.5",

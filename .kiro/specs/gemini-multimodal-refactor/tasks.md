@@ -57,7 +57,7 @@ This implementation plan breaks down the Gemini multi-modal refactor into discre
   - Add configuration for STT service selection (Gemini vs Google STT)
   - _Requirements: 2.1, 2.2, 2.3_
 
-- [ ] 7. Implement Text-to-Speech service
+- [x] 7. Implement Text-to-Speech service
   - Create `src/mortis/tts_service.py` module
   - Implement `TTSService` class using Google Cloud TTS
   - Configure voice parameters (pitch, speed) for Mortis character
