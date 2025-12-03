@@ -1,7 +1,7 @@
 # 👻 Mortis: Haunted Control Room
 
-**Mortis** is an interactive AI experience built with [Gradio](https://www.gradio.app/) for the **CompactifAI 🎃 Halloween Challenge** by **Multiverse**.
-At its core, Mortis connects to a powerful **Large Language Model (LLM)** through the **CompactifAI API**, giving life to a ghostly digital entity that speaks, feels, and acts.
+**Mortis** is an interactive AI experience built with [Gradio](https://www.gradio.app/) for the **Kiroween Hackathon** (https://kiroween.devpost.com/).
+At its core, Mortis connects to a powerful **Large Language Model (LLM)**, giving life to a ghostly digital entity that speaks, feels, and acts.
 
 As you converse with Mortis, its responses are not limited to text — the spirit manifests itself through a **SeeedStudio SO101 robotic arm**, whose gestures are controlled via the **[LeRobot](https://huggingface.co/lerobot)** framework from Hugging Face.
 Each motion of the arm reflects Mortis’s emotions and mood, as if the mechanical limb were **possessed** — transforming AI intent into tangible, spectral movement.
@@ -11,16 +11,15 @@ This project explores the haunting intersection of **language, embodiment, and r
 
 > 📖 For a detailed look into the character and technical architecture, read the **[Project Write-up](WRITEUP.md)**.
 
-## 🎥 [Watch on YouTube](https://youtu.be/mewhuGINpQ8)
+## 🎥 Demo
 
-
-[![Mortis Demo](assets/image.png)](https://youtu.be/mewhuGINpQ8)
+![Mortis Demo](assets/kiroween.png)
 
 
 ## 🚀 Features
 
 - Web UI with a custom Halloween background 🎃
-- Chat with CompactifAI models
+- Chat with LLM models via API
 - Secure `.env` environment variable loading
 - Dependency management with [`uv`](https://github.com/astral-sh/uv)
 - Developer-friendly `Makefile` shortcuts
@@ -50,8 +49,8 @@ uv sync
 Create a .env file in the project root:
 
 ```bash
-COMPACTIFAI_API_KEY=your_api_key_here
-API_BASE_URL=https://api.compactif.ai/v1/chat/completions
+API_KEY=your_api_key_here
+API_BASE_URL=https://api.example.com/v1/chat/completions
 ```
 
 (Do not commit .env; it’s already ignored in .gitignore)
@@ -144,7 +143,7 @@ if __name__ == "__main__":
 | `make calibrate`      | Runs the robot arm calibration script.                                       |
 | `make demo`           | Runs the example script at `$(DEMO)`.                                        |
 | `make test-gesture`   | Executes a test gesture with the robotic arm (`mortis.robot`).               |
-| `make check-env`      | Verifies `.env` exists and required env vars (e.g., `COMPACTIFAI_API_KEY`).  |
+| `make check-env`      | Verifies `.env` exists and required env vars (e.g., `API_KEY`).              |
 | `make add-<pkg>`      | Adds a dependency via `uv add` (e.g., `make add-python-dotenv`).             |
 | `make export`         | Exports pinned deps to `requirements.txt` from `uv.lock`.                    |
 | `make clean`          | Removes build/test caches and artifacts.
@@ -152,7 +151,7 @@ if __name__ == "__main__":
 ## 🧛 Credits
 
 Created by Jorge Lamperez
-Part of the CompactifAI Halloween Challenge 2025 🎃
+Part of the Kiroween Hackathon 2025 🎃
 
 ## 📜 License
 

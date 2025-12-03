@@ -1,6 +1,6 @@
 # Mortis: The Ghost in the Machine
 
-**Project for the CompactifAI 🎃 Halloween Challenge**
+**Project for the Kiroween Hackathon 🎃**
 **By: Jorge Lamperez**
 
 This document outlines the concept and construction of **Mortis**, an interactive AI entity that brings a mischievous Halloween spirit to life through the fusion of a Large Language Model (LLM) and a physical robotic arm.
@@ -19,13 +19,13 @@ The goal was to create an entity that feels genuinely haunted, blurring the line
 
 The creation of Mortis rests on a three-part architecture: the **Brain** (the LLM), the **Soul** (the structured intent), and the **Body** (the robotic arm).
 
-### 1. The Brain: CompactifAI LLM
+### 1. The Brain: LLM API
 
-The core of Mortis's intelligence is a Large Language Model accessed via the **CompactifAI API**. A system prompt explicitly defines its persona: *"You are Mortis, a mischievous Halloween spirit in a robotic arm."* This instruction sets the foundation for all its responses, ensuring it stays in character. User interactions are sent to the LLM, which generates a response consistent with this haunted personality.
+The core of Mortis's intelligence is a Large Language Model accessed via an **API**. A system prompt explicitly defines its persona: *"You are Mortis, a mischievous Halloween spirit in a robotic arm."* This instruction sets the foundation for all its responses, ensuring it stays in character. User interactions are sent to the LLM, which generates a response consistent with this haunted personality.
 
 ### 2. The Soul: Structured Output via Function Calling
 
-The true magic lies in translating the LLM's creative output into concrete, actionable commands. This is achieved using the **function calling** (or "tools") feature of the CompactifAI models.
+The true magic lies in translating the LLM's creative output into concrete, actionable commands. This is achieved using the **function calling** (or "tools") feature of the LLM API.
 
 Instead of just generating free-form text, the LLM is constrained to call a specific function: `perform_mortis_act`. This function requires the model to structure its response into a JSON object with three distinct fields:
 -   `message`: A short, in-character line of dialogue.

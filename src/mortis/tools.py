@@ -8,10 +8,10 @@ from dotenv import load_dotenv
 from .robot import MortisArm
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-load_dotenv(REPO_ROOT / ".env")  # carga variables del .env (si existe)
+load_dotenv(REPO_ROOT / ".env")
 
-API_KEY = os.getenv("MULTIVERSE_COMPACTIFAI_API_KEY")
-API_BASE_URL = os.getenv("API_BASE_URL", "https://api.compactif.ai/v1/chat/completions")
+API_KEY = os.getenv("API_KEY")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://api.example.com/v1/chat/completions")
 
 mortis_arm = MortisArm()
 

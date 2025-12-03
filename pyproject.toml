@@ -1,14 +1,14 @@
 [project]
 name = "mortis"
 version = "0.1.0"
-description = "Mortis: Haunted Control Room 👻🤖 (Gradio demo CompactifAI)"
+description = "Mortis: Haunted Control Room 👻🤖 (Kiroween Hackathon)"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "Jorge Lamperez" }]
 dependencies = [
   "gradio>=5.49.1",
-  "lerobot[feetech]>=0.4.0",
+  "lerobot[async,feetech,intelrealsense,smolvla]>=0.4.0",
   "python-dotenv>=1.2.1",
   "requests>=2.32.5",
 ]

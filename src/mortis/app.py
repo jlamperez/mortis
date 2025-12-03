@@ -9,7 +9,7 @@ from .tools import ask_mortis, mortis_arm
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-BG_IMAGE = REPO_ROOT / "assets" / "image.png"
+BG_IMAGE = REPO_ROOT / "assets" / "kiroween.png"
 
 MODEL_CHOICES = [
     "cai-llama-3-1-8b-slim",
@@ -52,7 +52,7 @@ def ui() -> gr.Blocks:
     css=build_css(BG_IMAGE)
     with gr.Blocks(fill_height=True, theme="soft", css=css) as demo:
         gr.Markdown(
-            "# CompactifAI 🎃 Halloween 🎃 Challenge\n"
+            "# Kiroween Hackathon 🎃\n"
             "## Mortis: Haunted Control Room 👻🤖",
             elem_id="app-title"
         )
