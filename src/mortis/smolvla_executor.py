@@ -77,11 +77,12 @@ class SmolVLAExecutor:
     
     # Safety limits for joint positions (in degrees)
     # These define the safe workspace boundaries
+    # Based on SO101 calibration and physical constraints
     JOINT_LIMITS = {
         "shoulder_pan.pos": (-180, 180),
-        "shoulder_lift.pos": (-90, 90),
+        "shoulder_lift.pos": (-120, 120),  # Extended range for SO101
         "elbow_flex.pos": (-135, 135),
-        "wrist_flex.pos": (-90, 90),
+        "wrist_flex.pos": (-105, 105),     # Extended range for SO101
         "wrist_roll.pos": (-180, 180),
         "gripper.pos": (0, 100),  # 0=open, 100=closed
     }
