@@ -307,7 +307,7 @@ This hybrid approach provides the best of both worlds: simplicity for gestures a
   - Handle errors from both systems
   - _Requirements: 7.1, 7.2, 7.5_
 
-- [ ] 30. Add hybrid status display to Gradio UI
+- [x] 30. Add hybrid status display to Gradio UI
   - Add status textbox component to UI for robot status
   - Implement `check_status()` function that monitors both systems
   - Check AsyncExecutor for gesture status updates
@@ -354,7 +354,7 @@ This hybrid approach provides the best of both worlds: simplicity for gestures a
   - Update README with new environment variables
   - _Requirements: 1.3, 8.4_
 
-- [ ] 34. Implement logging and monitoring
+- [ ]* 34. Implement logging and monitoring
   - Add structured logging throughout application
   - Log Gemini API calls and response times
   - Log SmolVLA inference times and success rates
@@ -370,7 +370,7 @@ This hybrid approach provides the best of both worlds: simplicity for gestures a
   - Add troubleshooting section
   - _Requirements: 8.4, 9.5_
 
-- [ ] 36. Perform end-to-end integration testing
+- [ ]* 36. Perform end-to-end integration testing
   - Test complete voice input → Gemini → SmolVLA → audio output flow
   - Test text input → intent detection → gesture execution flow
   - Test error handling and recovery across all components
@@ -385,7 +385,7 @@ This hybrid approach provides the best of both worlds: simplicity for gestures a
   - Benchmark performance metrics
   - _Requirements: 1.5, 2.4, 7.3_
 
-- [ ] 37. Optimize performance
+- [ ]* 37. Optimize performance
   - Profile Gemini API response times
   - Optimize SmolVLA inference speed
   - Reduce audio processing latency
@@ -393,7 +393,7 @@ This hybrid approach provides the best of both worlds: simplicity for gestures a
   - Optimize GPU memory usage
   - _Requirements: 1.5, 2.4_
 
-- [ ] 38. Final deployment preparation
+- [ ]* 38. Final deployment preparation
   - Create deployment checklist
   - Set up monitoring and alerting
   - Prepare rollback procedures

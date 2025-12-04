@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import logging
+import time
 
 from pathlib import Path
 import gradio as gr
@@ -9,8 +10,8 @@ import gradio as gr
 from .tools import ask_mortis, mortis_arm
 from .stt_service import STTService, AudioProcessingError
 from .tts_service import get_tts_service
-from .async_executor import AsyncExecutor, Task, TaskType
-from .lerobot_async_client import LeRobotAsyncClient
+from .async_executor import AsyncExecutor, Task, TaskType, TaskStatus
+from .lerobot_async_client import LeRobotAsyncClient, ManipulationStatus
 from .intent_router import IntentRouter, Intent
 from .models import ResponseType
 
@@ -115,11 +116,16 @@ def get_async_executor():
 def get_lerobot_client():
     """Lazy initialization of LeRobotAsyncClient."""
     global lerobot_client
+    
+    # Use a sentinel value to indicate we've already checked and manipulation is disabled
     if lerobot_client is None:
         # Check if manipulation is enabled
         enable_manipulation = os.getenv("ENABLE_MANIPULATION", "false").lower() == "true"
         
         if not enable_manipulation:
+            # Set to False (not None) to indicate we've checked and it's disabled
+            # This prevents logging the message repeatedly
+            lerobot_client = False
             logging.getLogger(__name__).info("ℹ️ Manipulation disabled (ENABLE_MANIPULATION=false)")
             return None
         
@@ -136,7 +142,9 @@ def get_lerobot_client():
             logging.getLogger(__name__).error(f"❌ Failed to initialize LeRobotAsyncClient: {e}")
             # Don't raise - manipulation is optional
             return None
-    return lerobot_client
+    
+    # Return None if manipulation is disabled (lerobot_client == False)
+    return lerobot_client if lerobot_client is not False else None
 
 
 def get_intent_router_instance():
@@ -398,7 +406,7 @@ def start_async_systems():
         else:
             logger.info("ℹ️ Robot arm already connected")
     except Exception as e:
-        logger.error(f"❌ Failed to connect robot arm: {e}")
+        logger.error(f"❌ Failed to connect robot arm: {e}", exc_info=True)
         logger.info("ℹ️ Gestures will be skipped until robot is connected")
     
     # Start AsyncExecutor
@@ -407,8 +415,10 @@ def start_async_systems():
         if not executor.running:
             executor.start()
             logger.info("✅ AsyncExecutor started")
+        else:
+            logger.info("ℹ️ AsyncExecutor already running")
     except Exception as e:
-        logger.error(f"❌ Failed to start AsyncExecutor: {e}")
+        logger.error(f"❌ Failed to start AsyncExecutor: {e}", exc_info=True)
     
     # Start LeRobotAsyncClient (if enabled)
     try:
@@ -420,8 +430,82 @@ def start_async_systems():
             else:
                 logger.warning("⚠️ LeRobotAsyncClient failed to start")
     except Exception as e:
-        logger.error(f"❌ Failed to start LeRobotAsyncClient: {e}")
+        logger.error(f"❌ Failed to start LeRobotAsyncClient: {e}", exc_info=True)
         logger.info("ℹ️ Manipulation tasks will fall back to gestures")
+
+
+def check_status():
+    """
+    Check status of both async execution systems and return formatted status message.
+    
+    This function monitors:
+    1. AsyncExecutor for gesture status updates
+    2. LeRobotAsyncClient for manipulation status
+    
+    Returns:
+        Formatted status string with icons and messages
+    """
+    logger = logging.getLogger(__name__)
+    
+    status_parts = []
+    
+    # Check AsyncExecutor status
+    try:
+        executor = get_async_executor()
+        if executor and executor.running:
+            # Check if executor is busy
+            current_task = executor.get_current_task()
+            if current_task:
+                # Task is running
+                if current_task.type == TaskType.GESTURE:
+                    status_parts.append(f"👋 Gesture: {current_task.gesture} (running)")
+                else:
+                    status_parts.append(f"🤖 Task: {current_task.command[:30]}... (running)")
+            else:
+                # Check for recent status updates
+                updates = executor.get_all_status_updates()
+                if updates:
+                    latest = updates[-1]
+                    if latest.status == TaskStatus.COMPLETE:
+                        status_parts.append(f"✅ Gesture complete")
+                    elif latest.status == TaskStatus.FAILED:
+                        status_parts.append(f"❌ Gesture failed: {latest.error}")
+                    elif latest.status == TaskStatus.QUEUED:
+                        status_parts.append(f"⏳ Gesture queued")
+    except Exception as e:
+        logger.error(f"Error checking AsyncExecutor status: {e}")
+    
+    # Check LeRobotAsyncClient status
+    try:
+        client = get_lerobot_client()
+        if client and client.is_running():
+            manipulation_status = client.get_status()
+            current_task = client.get_current_task()
+            
+            if manipulation_status == ManipulationStatus.RUNNING and current_task:
+                # Manipulation task is running
+                elapsed = time.time() - current_task.started_at if current_task.started_at else 0
+                status_parts.append(f"🤖 Manipulation: {current_task.task[:40]}... ({elapsed:.1f}s)")
+            elif manipulation_status == ManipulationStatus.COMPLETE and current_task:
+                # Task just completed
+                duration = current_task.duration or 0
+                status_parts.append(f"✅ Manipulation complete ({duration:.1f}s)")
+            elif manipulation_status == ManipulationStatus.FAILED and current_task:
+                # Task failed
+                error = current_task.error or "Unknown error"
+                status_parts.append(f"❌ Manipulation failed: {error[:50]}")
+            elif manipulation_status == ManipulationStatus.STARTING:
+                status_parts.append(f"⏳ Starting manipulation...")
+            elif manipulation_status == ManipulationStatus.STOPPED:
+                status_parts.append(f"⏹️ Manipulation stopped")
+    except Exception as e:
+        logger.error(f"Error checking LeRobotAsyncClient status: {e}")
+    
+    # Return formatted status or idle message
+    if status_parts:
+        return " | ".join(status_parts)
+    else:
+        return "💤 Idle - Ready for commands"
 
 
 def stop_async_systems():
@@ -584,10 +668,28 @@ def ui() -> gr.Blocks:
                     include_audio=False,
                 )
                 gr.Markdown("**Webcam (local, no data upload)**\nThe video is only processed in your browser.")
+                
+                # Robot status display
+                status_display = gr.Textbox(
+                    label="🤖 Robot Status",
+                    value="💤 Idle - Ready for commands",
+                    interactive=False,
+                    lines=2,
+                    max_lines=3,
+                )
+                
+                # Status polling timer (must be inside Blocks context)
+                status_timer = gr.Timer(value=0.5, active=True)
 
         # Lifecycle management: start async systems on load, stop on unload
-        demo.load(start_async_systems)
-        demo.unload(stop_async_systems)
+        demo.load(fn=start_async_systems)
+        demo.unload(fn=stop_async_systems)
+        
+        # Status polling: update status display every 500ms using a timer
+        status_timer.tick(
+            fn=check_status,
+            outputs=[status_display]
+        )
 
     return demo
 
@@ -633,8 +735,15 @@ def main():
     # Clean up old audio files on startup
     cleanup_audio_files()
     
+    # Start async systems before launching UI
+    start_async_systems()
+    
     port = int(os.getenv("PORT", "7860"))
     logger.info(f"🌐 Launching on http://127.0.0.1:{port}")
     logger.info("=" * 60)
     
-    ui().launch(server_name="127.0.0.1", server_port=port, show_error=True,)
+    try:
+        ui().launch(server_name="127.0.0.1", server_port=port, show_error=True)
+    finally:
+        # Ensure cleanup on exit
+        stop_async_systems()
