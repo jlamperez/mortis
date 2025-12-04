@@ -145,7 +145,7 @@ This implementation plan breaks down the Gemini multi-modal refactor into discre
 
 ## Phase 4: SmolVLA Training Pipeline
 
-- [ ] 16. Create training configuration
+- [ ]* 16. Create training configuration
   - Create `config/train_smolvla.yaml` with Hydra configuration
   - Configure SmolVLA policy parameters (vision backbone, chunk size)
   - Set training hyperparameters (batch size, learning rate, steps)
@@ -153,7 +153,7 @@ This implementation plan breaks down the Gemini multi-modal refactor into discre
   - Add Weights & Biases integration configuration
   - _Requirements: 5.3, 5.5_
 
-- [ ] 17. Implement training script
+- [x] 17. Implement training script
   - Create `src/mortis/train.py` module
   - Implement dataset loading from local or Hugging Face
   - Configure LeRobot training pipeline
@@ -161,14 +161,14 @@ This implementation plan breaks down the Gemini multi-modal refactor into discre
   - Implement training progress logging
   - _Requirements: 5.1, 5.2, 5.4, 5.5_
 
-- [ ] 18. Set up training monitoring
+- [ ]* 18. Set up training monitoring
   - Integrate Weights & Biases for metric tracking
   - Log training loss, validation loss, learning rate
   - Add sample prediction visualization
   - Implement early stopping based on validation performance
   - _Requirements: 5.5_
 
-- [ ] 19. Create training execution commands
+- [ ]* 19. Create training execution commands
   - Add `train-smolvla` target to Makefile
   - Document training command with all parameters
   - Add GPU memory optimization flags

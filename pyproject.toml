@@ -21,6 +21,7 @@ dependencies = [
 mortis = "mortis.app:main"
 calibrate = "mortis.calibrate:main"
 setup-dataset = "mortis.setup_dataset:main"
+setup-train = "mortis.setup_train:main"
 
 [build-system]
 requires = ["hatchling"]

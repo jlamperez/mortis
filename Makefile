@@ -11,7 +11,7 @@ ENV_FILE := .env
 REQUIRED_ENV := GEMINI_API_KEY
 
 # ---------- Targets ----------
-.PHONY: help install sync lock upgrade run run-m calibrate test-gesture demo setup-dataset check-env add-% export clean
+.PHONY: help install sync lock upgrade run run-m calibrate test-gesture demo setup-dataset setup-train check-env add-% export clean
 
 help:
 	@echo "Available commands:"
@@ -25,6 +25,7 @@ help:
 	@echo "  make test-gesture- Run a test gesture with the robotic arm"
 	@echo "  make demo        - Run $(DEMO)"
 	@echo "  make setup-dataset - Setup dataset infrastructure (use ARGS='--dataset-name=NAME' for custom name)"
+	@echo "  make setup-train - Generate training scripts (use ARGS='--dataset-repo-id=user/dataset' required)"
 	@echo "  make check-env   - Check $(ENV_FILE) and required variables"
 	@echo "  make add-<pkg>   - Add dependency with uv (e.g., make add-python-dotenv)"
 	@echo "  make export      - Export requirements.txt from uv.lock"
@@ -59,6 +60,9 @@ demo: check-env
 
 setup-dataset:
 	$(UV) run setup-dataset $(ARGS)
+
+setup-train:
+	$(UV) run setup-train $(ARGS)
 
 check-env:
 	@test -f $(ENV_FILE) || { echo "$(ENV_FILE) is missing in the root directory."; exit 1; }

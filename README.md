@@ -160,6 +160,38 @@ if __name__ == "__main__":
     mortis_arm.disconnect()
 ```
 
+## 🎓 Training SmolVLA Models
+
+Mortis supports training SmolVLA vision-language-action models for advanced manipulation tasks. The training workflow uses LeRobot's native training pipeline.
+
+### Quick Start
+
+1. **Setup dataset infrastructure** (if not already done):
+   ```bash
+   make setup-dataset
+   ```
+
+2. **Generate training scripts**:
+   ```bash
+   make setup-train ARGS="--dataset-repo-id jlamperez/kiroween-potion-v1 --model-repo-id jlamperez/test-policy-smolvla --generate-configs"
+   ```
+
+3. **Start training**:
+   ```bash
+   cd train
+   ./train_standard.sh  # 20k steps (recommended)
+   # or ./train_quick.sh for testing (1k steps)
+   # or ./train_full.sh for production (100k steps)
+   ```
+   
+   Training outputs (checkpoints, logs) will be saved to `outputs/train/smolvla_*/`
+
+4. **Monitor training**:
+   - Console: Watch terminal output
+   - W&B Dashboard: https://wandb.ai (login with `wandb login`)
+
+For detailed training documentation, see [Training Guide](docs/TRAINING_GUIDE.md).
+
 ## 🧪 Useful Commands
 
 | Command               | What it does                                                                 |
@@ -174,6 +206,8 @@ if __name__ == "__main__":
 | `make calibrate`      | Runs the robot arm calibration script.                                       |
 | `make demo`           | Runs the example script at `$(DEMO)`.                                        |
 | `make test-gesture`   | Executes a test gesture with the robotic arm (`mortis.robot`).               |
+| `make setup-dataset`  | Setup dataset infrastructure for data collection.                            |
+| `make setup-train`    | Generate training scripts (requires `ARGS='--dataset-repo-id=...'`).         |
 | `make check-env`      | Verifies `.env` exists and required env vars (e.g., `GEMINI_API_KEY`).       |
 | `make add-<pkg>`      | Adds a dependency via `uv add` (e.g., `make add-python-dotenv`).             |
 | `make export`         | Exports pinned deps to `requirements.txt` from `uv.lock`.                    |
