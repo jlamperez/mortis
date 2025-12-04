@@ -307,14 +307,14 @@ This implementation plan breaks down the Gemini multi-modal refactor into discre
 
 ## Phase 8: Integration, Testing, and Deployment
 
-- [ ] 32. Update project dependencies
+- [ ]* 32. Update project dependencies
   - Update `pyproject.toml` with new dependencies (google-generativeai, google-cloud-speech, google-cloud-texttospeech)
   - Add optional dependencies for training (wandb, hydra-core)
   - Update Makefile with new commands (collect-data, train-smolvla)
   - Run `make install` to sync dependencies
   - _Requirements: 8.4, 9.5_
 
-- [ ] 33. Update environment configuration
+- [ ]* 33. Update environment configuration
   - Create `.env.example` with all required variables
   - Document Gemini API key setup
   - Document Google Cloud credentials setup

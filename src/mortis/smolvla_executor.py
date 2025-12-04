@@ -116,6 +116,7 @@ class SmolVLAExecutor:
         # Initialize attributes first (for cleanup in case of early failure)
         self.camera = None
         self.policy = None
+        self.preprocessor = None
         
         self.checkpoint_path = Path(checkpoint_path)
         
@@ -188,6 +189,11 @@ class SmolVLAExecutor:
                     # Save updated config back
                     with open(config_path, 'w') as f:
                         json.dump(config_dict, f, indent=2)
+                
+                # Get VLM model name for tokenizer
+                vlm_model_name = config_dict.get('vlm_model_name', 'HuggingFaceTB/SmolVLM2-500M-Video-Instruct')
+            else:
+                vlm_model_name = 'HuggingFaceTB/SmolVLM2-500M-Video-Instruct'
             
             # Load policy using from_pretrained (it will load the config automatically)
             self.policy = SmolVLAPolicy.from_pretrained(str(self.checkpoint_path))
@@ -200,12 +206,43 @@ class SmolVLAExecutor:
             
             logger.info("SmolVLA model loaded successfully")
             
+            # Load preprocessor (handles tokenization automatically)
+            self._load_preprocessor()
+            
             # Perform warmup inference
             self._warmup()
             
         except Exception as e:
             logger.error(f"Failed to load SmolVLA model: {e}")
             raise SmolVLAError(f"Model loading failed: {e}")
+    
+    def _load_preprocessor(self):
+        """
+        Load preprocessor from checkpoint.
+        
+        The preprocessor handles automatic tokenization of task strings
+        through the TokenizerProcessorStep.
+        
+        Raises:
+            SmolVLAError: If preprocessor loading fails
+        """
+        try:
+            from lerobot.policies.factory import make_pre_post_processors
+            
+            logger.info("Loading preprocessor from checkpoint...")
+            
+            # Load preprocessor and postprocessor using policy config
+            self.preprocessor, _ = make_pre_post_processors(
+                self.policy.config,
+                pretrained_path=str(self.checkpoint_path),
+                device=self.device
+            )
+            
+            logger.info("Preprocessor loaded successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to load preprocessor: {e}")
+            raise SmolVLAError(f"Preprocessor loading failed: {e}")
     
     def _warmup(self):
         """
@@ -249,13 +286,19 @@ class SmolVLAExecutor:
         # Create dummy images
         dummy_image = self._create_dummy_image()
         
-        return {
+        observation = {
             "observation.images.camera1": dummy_image,
             "observation.images.camera2": dummy_image.clone(),
             "observation.images.camera3": dummy_image.clone(),
             "observation.state": dummy_state,
-            "task": ["dummy task"]  # Task as list of strings
+            "task": "dummy task"  # Task as string (preprocessor will handle it)
         }
+        
+        # Apply preprocessor to tokenize task
+        if self.preprocessor is not None:
+            observation = self.preprocessor(observation)
+        
+        return observation
     
     def _init_camera(self):
         """
@@ -516,8 +559,11 @@ class SmolVLAExecutor:
                     # Capture current observation
                     observation = self._get_observation()
                     
-                    # Add tokenized task instruction
-                    observation = self._add_language_tokens(observation, command)
+                    # Add task string (preprocessor will tokenize it)
+                    observation = self._add_task_string(observation, command)
+                    
+                    # Apply preprocessor (tokenizes task string automatically)
+                    observation = self.preprocessor(observation)
                     
                     # Run inference to predict next action
                     action = self._run_inference_with_oom_handling(observation)
@@ -599,47 +645,24 @@ class SmolVLAExecutor:
         
         return observation
     
-    def _add_language_tokens(self, observation: Dict[str, torch.Tensor], command: str) -> Dict[str, torch.Tensor]:
+    def _add_task_string(self, observation: Dict[str, torch.Tensor], command: str) -> Dict[str, torch.Tensor]:
         """
-        Add tokenized language instruction to observation.
+        Add task string to observation.
+        
+        The preprocessor will automatically tokenize this string through
+        the TokenizerProcessorStep.
         
         Args:
             observation: Current observation dictionary
             command: Natural language command string
             
         Returns:
-            Observation dictionary with added language tokens
+            Observation dictionary with added task string
         """
-        # Try to find tokenizer in policy
-        tokenizer = None
-        if hasattr(self.policy, 'tokenizer'):
-            tokenizer = self.policy.tokenizer
-        elif hasattr(self.policy, 'processor') and hasattr(self.policy.processor, 'tokenizer'):
-            tokenizer = self.policy.processor.tokenizer
-        elif hasattr(self.policy, 'vlm') and hasattr(self.policy.vlm, 'processor'):
-            tokenizer = self.policy.vlm.processor.tokenizer
+        # Simply add the task string - the preprocessor will tokenize it
+        observation["task"] = command
         
-        if tokenizer is not None:
-            # Tokenize command
-            tokens = tokenizer(
-                command,
-                return_tensors="pt",
-                padding="max_length",
-                max_length=self.policy.config.tokenizer_max_length,
-                truncation=True
-            )
-            
-            # Add tokens to observation
-            observation["observation.language.tokens"] = tokens["input_ids"].to(self.device)
-            
-            # Add attention mask if needed
-            if "attention_mask" in tokens:
-                observation["observation.language.attention_mask"] = tokens["attention_mask"].to(self.device)
-            
-            logger.debug(f"Added language tokens: shape={tokens['input_ids'].shape}")
-        else:
-            logger.error("Could not find tokenizer in policy")
-            raise SmolVLAError("Policy does not have a tokenizer")
+        logger.debug(f"Added task string: '{command}'")
         
         return observation
     
