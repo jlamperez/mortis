@@ -111,6 +111,8 @@ def main():
         
     except SmolVLAError as e:
         print(f"\n❌ SmolVLA Error: {e}")
+        import traceback
+        traceback.print_exc()
         return 1
     except Exception as e:
         print(f"\n❌ Unexpected error: {e}")

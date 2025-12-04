@@ -172,25 +172,25 @@ class SmolVLAExecutor:
             import json
             config_path = self.checkpoint_path / "config.json"
             
+            # Load config - ensure 'type' field is set to 'smolvla'
+            config_path = self.checkpoint_path / "config.json"
+            
             if config_path.exists():
-                # Load config manually and filter out non-standard fields
+                # Load config
                 with open(config_path, 'r') as f:
                     config_dict = json.load(f)
                 
-                # Remove 'type' field if present (not part of SmolVLAConfig)
-                config_dict.pop('type', None)
-                
-                # Create config from filtered dict
-                config = SmolVLAConfig(**config_dict)
-            else:
-                # Fallback to standard loading
-                config = SmolVLAConfig.from_pretrained(str(self.checkpoint_path))
+                # Ensure 'type' field is set to 'smolvla'
+                if 'type' not in config_dict or config_dict['type'] != 'smolvla':
+                    logger.debug("Setting 'type' field to 'smolvla' in config")
+                    config_dict['type'] = 'smolvla'
+                    
+                    # Save updated config back
+                    with open(config_path, 'w') as f:
+                        json.dump(config_dict, f, indent=2)
             
-            # Load policy
-            self.policy = SmolVLAPolicy.from_pretrained(
-                str(self.checkpoint_path),
-                config=config
-            )
+            # Load policy using from_pretrained (it will load the config automatically)
+            self.policy = SmolVLAPolicy.from_pretrained(str(self.checkpoint_path))
             
             # Move to device
             self.policy.to(self.device)
@@ -222,7 +222,10 @@ class SmolVLAExecutor:
                 # Run dummy inference
                 with torch.no_grad():
                     # SmolVLA expects a batch of observations
-                    _ = self.policy.select_action(dummy_obs)
+                    result = self.policy.select_action(dummy_obs)
+                    # Result may be a dict with 'action' key or just a tensor
+                    if isinstance(result, dict):
+                        _ = result.get('action', result)
                 
                 # Clear cache
                 torch.cuda.empty_cache()
@@ -426,6 +429,8 @@ class SmolVLAExecutor:
                 raise
             except Exception as e:
                 logger.error(f"Execution failed: {e}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
                 self._emergency_stop()
                 raise SmolVLAError(f"Execution failed: {e}")
         
@@ -511,11 +516,14 @@ class SmolVLAExecutor:
                     # Capture current observation
                     observation = self._get_observation()
                     
-                    # Add task instruction (SmolVLA expects task as list of strings)
-                    observation["task"] = [command]
+                    # Add tokenized task instruction
+                    observation = self._add_language_tokens(observation, command)
                     
                     # Run inference to predict next action
                     action = self._run_inference_with_oom_handling(observation)
+                    
+                    # Debug: log action type and shape
+                    logger.debug(f"Action type: {type(action)}, shape: {action.shape if hasattr(action, 'shape') else 'N/A'}")
                     
                     # Validate action safety
                     if self.enable_safety_checks:
@@ -525,13 +533,18 @@ class SmolVLAExecutor:
                     self._send_action(action)
                     
                     # Check if task is complete
-                    if self._is_task_complete(observation, step, action):
-                        elapsed = time.time() - start_time
-                        logger.info(
-                            f"Task completed at step {step} "
-                            f"(elapsed: {elapsed:.2f}s, avg FPS: {step/elapsed:.1f})"
-                        )
-                        return True
+                    try:
+                        is_complete = self._is_task_complete(observation, step, action)
+                        if is_complete:
+                            elapsed = time.time() - start_time
+                            logger.info(
+                                f"Task completed at step {step} "
+                                f"(elapsed: {elapsed:.2f}s, avg FPS: {step/elapsed:.1f})"
+                            )
+                            return True
+                    except Exception as e:
+                        logger.error(f"Error in _is_task_complete: {e}")
+                        raise
                     
                     # Small delay between steps to maintain ~30 FPS
                     time.sleep(0.033)
@@ -583,6 +596,50 @@ class SmolVLAExecutor:
         # Add camera images
         for i, img_tensor in enumerate(image_tensors, start=1):
             observation[f"observation.images.camera{i}"] = img_tensor
+        
+        return observation
+    
+    def _add_language_tokens(self, observation: Dict[str, torch.Tensor], command: str) -> Dict[str, torch.Tensor]:
+        """
+        Add tokenized language instruction to observation.
+        
+        Args:
+            observation: Current observation dictionary
+            command: Natural language command string
+            
+        Returns:
+            Observation dictionary with added language tokens
+        """
+        # Try to find tokenizer in policy
+        tokenizer = None
+        if hasattr(self.policy, 'tokenizer'):
+            tokenizer = self.policy.tokenizer
+        elif hasattr(self.policy, 'processor') and hasattr(self.policy.processor, 'tokenizer'):
+            tokenizer = self.policy.processor.tokenizer
+        elif hasattr(self.policy, 'vlm') and hasattr(self.policy.vlm, 'processor'):
+            tokenizer = self.policy.vlm.processor.tokenizer
+        
+        if tokenizer is not None:
+            # Tokenize command
+            tokens = tokenizer(
+                command,
+                return_tensors="pt",
+                padding="max_length",
+                max_length=self.policy.config.tokenizer_max_length,
+                truncation=True
+            )
+            
+            # Add tokens to observation
+            observation["observation.language.tokens"] = tokens["input_ids"].to(self.device)
+            
+            # Add attention mask if needed
+            if "attention_mask" in tokens:
+                observation["observation.language.attention_mask"] = tokens["attention_mask"].to(self.device)
+            
+            logger.debug(f"Added language tokens: shape={tokens['input_ids'].shape}")
+        else:
+            logger.error("Could not find tokenizer in policy")
+            raise SmolVLAError("Policy does not have a tokenizer")
         
         return observation
     
@@ -915,14 +972,35 @@ class SmolVLAExecutor:
             GPUOutOfMemoryError: If GPU runs out of memory
         """
         try:
-            return self.policy.select_action(observation)
+            result = self.policy.select_action(observation)
+            
+            # Debug: log what we got back
+            logger.debug(f"Policy returned type: {type(result)}")
+            if isinstance(result, dict):
+                logger.debug(f"Policy returned dict keys: {result.keys()}")
+            
+            # SmolVLA returns a dictionary with 'action' key
+            if isinstance(result, dict):
+                if 'action' in result:
+                    return result['action']
+                else:
+                    # Try to find the action in the dict
+                    logger.error(f"Policy returned dict without 'action' key. Keys: {result.keys()}")
+                    raise SmolVLAError(f"Policy returned unexpected format: {type(result)}")
+            return result
         except torch.cuda.OutOfMemoryError as e:
             logger.error("GPU out of memory during inference")
             # Try to recover by clearing cache
             torch.cuda.empty_cache()
             # Try one more time
             try:
-                return self.policy.select_action(observation)
+                result = self.policy.select_action(observation)
+                if isinstance(result, dict):
+                    if 'action' in result:
+                        return result['action']
+                    else:
+                        raise SmolVLAError(f"Policy returned unexpected format: {type(result)}")
+                return result
             except torch.cuda.OutOfMemoryError:
                 raise GPUOutOfMemoryError("GPU out of memory, cannot recover")
     
