@@ -98,21 +98,21 @@ This implementation plan breaks down the Gemini multi-modal refactor into discre
 
 ## Phase 3: Dataset Collection Infrastructure
 
-- [ ] 11. Set up LeRobot dataset infrastructure
+- [x] 11. Set up LeRobot dataset infrastructure
   - Create `src/mortis/data_collector.py` module
   - Implement `DataCollector` class with LeRobot dataset integration
   - Configure dataset directory structure (`data/mortis_manipulation/`)
   - Implement dataset metadata management (task descriptions, episode counts)
   - _Requirements: 4.3, 5.2_
 
-- [ ] 12. Implement camera integration for data collection
+- [ ]* 12. Implement camera integration for data collection
   - Add camera initialization in `DataCollector`
   - Implement synchronized image capture with robot state
   - Configure camera parameters (resolution, FPS)
   - Add camera calibration utilities
   - _Requirements: 4.2_
 
-- [ ] 13. Implement episode recording functionality
+- [ ]* 13. Implement episode recording functionality
   - Create `record_episode()` method for capturing demonstrations
   - Implement real-time data capture loop (30 FPS)
   - Add keyboard controls for start/stop recording
@@ -120,14 +120,14 @@ This implementation plan breaks down the Gemini multi-modal refactor into discre
   - Save episodes in LeRobot-compatible format
   - _Requirements: 4.1, 4.2, 4.5_
 
-- [ ] 14. Implement task labeling system
+- [ ]* 14. Implement task labeling system
   - Add task description input for each episode
   - Create task label validation against predefined task set
   - Implement episode metadata storage
   - Add episode review and re-recording capability
   - _Requirements: 4.4_
 
-- [ ] 15. Create data collection CLI script
+- [ ]* 15. Create data collection CLI script
   - Create `src/mortis/collect_data.py` entry point
   - Implement interactive data collection workflow
   - Add progress tracking (episodes per task)
