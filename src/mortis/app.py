@@ -137,6 +137,10 @@ def get_lerobot_client():
                 robot_port=robot_port,
                 model_path=model_path
             )
+            
+            # Configure idle callback to move robot to safe position on timeout
+            lerobot_client.set_idle_callback(lambda: mortis_arm.move_arm("idle") if mortis_arm.connected else None)
+            
             logging.getLogger(__name__).info("✅ LeRobotAsyncClient initialized")
         except Exception as e:
             logging.getLogger(__name__).error(f"❌ Failed to initialize LeRobotAsyncClient: {e}")
@@ -316,9 +320,16 @@ def mortis_reply_with_audio(message, history, model_name, audio_input_path=None)
             client = get_lerobot_client()
             if client and client.is_running():
                 try:
-                    # Submit manipulation task asynchronously
-                    client.execute_task(intent.command, blocking=False)
-                    logger.info(f"✅ Manipulation task submitted: {intent.command}")
+                    # Get timeout from environment or use default (60s)
+                    timeout = float(os.getenv("MANIPULATION_TIMEOUT", "60.0"))
+                    
+                    # Submit manipulation task asynchronously with timeout
+                    client.execute_task(
+                        intent.command, 
+                        blocking=False, 
+                        timeout=timeout
+                    )
+                    logger.info(f"✅ Manipulation task submitted: {intent.command} (timeout: {timeout}s)")
                 except Exception as e:
                     logger.error(f"❌ Failed to submit manipulation task: {e}")
                     logger.info("Falling back to gesture execution")
@@ -496,8 +507,16 @@ def check_status():
                 status_parts.append(f"❌ Manipulation failed: {error[:50]}")
             elif manipulation_status == ManipulationStatus.STARTING:
                 status_parts.append(f"⏳ Starting manipulation...")
-            elif manipulation_status == ManipulationStatus.STOPPED:
-                status_parts.append(f"⏹️ Manipulation stopped")
+            elif manipulation_status == ManipulationStatus.STOPPED and current_task:
+                # Task was stopped (timeout or manual stop)
+                duration = current_task.duration or 0
+                error_msg = current_task.error or "Stopped"
+                
+                # Check if control thread is still finishing
+                if client.control_thread and client.control_thread.is_alive():
+                    status_parts.append(f"⏹️ Stopped (finishing actions...): {error_msg[:30]}")
+                else:
+                    status_parts.append(f"⏹️ Stopped: {error_msg[:40]} ({duration:.1f}s)")
     except Exception as e:
         logger.error(f"Error checking LeRobotAsyncClient status: {e}")
     
@@ -676,6 +695,36 @@ def ui() -> gr.Blocks:
                     interactive=False,
                     lines=2,
                     max_lines=3,
+                )
+                
+                # Stop button for manipulation tasks
+                def stop_manipulation_task():
+                    """Stop the currently running manipulation task."""
+                    logger = logging.getLogger(__name__)
+                    client = get_lerobot_client()
+                    
+                    if client and client.is_running():
+                        if client.is_busy():
+                            logger.info("🛑 User requested task stop")
+                            success = client.stop_current_task()
+                            if success:
+                                return "⏹️ Task stopped by user"
+                            else:
+                                return "❌ Failed to stop task"
+                        else:
+                            return "ℹ️ No task running"
+                    else:
+                        return "ℹ️ Manipulation not enabled"
+                
+                stop_button = gr.Button(
+                    "🛑 Stop Manipulation Task",
+                    variant="stop",
+                    size="sm",
+                )
+                
+                stop_button.click(
+                    fn=stop_manipulation_task,
+                    outputs=[status_display]
                 )
                 
                 # Status polling timer (must be inside Blocks context)
