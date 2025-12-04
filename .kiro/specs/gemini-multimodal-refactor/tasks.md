@@ -2,6 +2,22 @@
 
 This implementation plan breaks down the Gemini multi-modal refactor into discrete, actionable coding tasks. Each task builds incrementally on previous work, following the 8-phase migration strategy outlined in the design document.
 
+## Important Note: Hybrid Async Execution System
+
+**Phase 7** uses a **hybrid approach** for asynchronous execution:
+
+1. **AsyncExecutor** (`src/mortis/async_executor.py`): Simple Python threading system for quick gesture tasks
+   - Use for: wave, point, idle, grab, drop gestures
+   - Advantages: Simple, fast (1-2s), low overhead
+   - Implementation: Task queue + worker thread + status queue
+
+2. **LeRobotAsyncClient** (`src/mortis/lerobot_async_client.py`): Wrapper over LeRobot's async inference system
+   - Use for: Complex manipulation tasks with SmolVLA
+   - Advantages: Optimized for continuous inference, handles action chunks, real-time control
+   - Implementation: PolicyServer + RobotClient + gRPC communication
+
+This hybrid approach provides the best of both worlds: simplicity for gestures and power for manipulation.
+
 ## Phase 1: Gemini API Integration
 
 - [x] 1. Set up Gemini API client infrastructure
@@ -257,51 +273,67 @@ This implementation plan breaks down the Gemini multi-modal refactor into discre
   - _Requirements: 3.2, 3.3, 3.4_
 
 
-## Phase 7: Asynchronous Execution System
+## Phase 7: Asynchronous Execution System (Hybrid Approach)
 
-- [x] 27. Implement async executor infrastructure
+**Note**: This phase uses a hybrid execution system:
+- **AsyncExecutor**: Simple threading for quick gestures (wave, point, idle)
+- **LeRobotAsyncClient**: LeRobot async inference (PolicyServer + RobotClient) for complex manipulation tasks with SmolVLA
+
+- [x] 27. Implement async executor infrastructure for gestures
   - Create `src/mortis/async_executor.py` module
   - Implement `AsyncExecutor` class with task queue
   - Add background worker thread for task processing
   - Implement status queue for progress updates
   - Add start/stop methods for executor lifecycle
+  - Create `Task` and `StatusUpdate` dataclasses
+  - Add comprehensive tests (15 tests, all passing)
   - _Requirements: 7.1, 7.2_
 
-- [ ] 28. Implement task models and queue management
-  - Create `Task` dataclass in `models.py`
-  - Implement task creation methods for gestures and manipulation
-  - Add task status tracking (queued, running, complete, failed)
-  - Implement task submission and retrieval methods
-  - _Requirements: 7.1, 7.5_
-
-- [ ] 29. Integrate async execution with SmolVLA
-  - Update SmolVLA executor to work with async system
-  - Implement task execution in worker thread
-  - Add status updates during SmolVLA inference
-  - Handle errors and update task status accordingly
+- [x] 28. Implement LeRobot async client for manipulation
+  - Create `src/mortis/lerobot_async_client.py` module
+  - Implement `LeRobotAsyncClient` wrapper class
+  - Integrate PolicyServer and RobotClient from LeRobot
+  - Add `ManipulationTask` and `ManipulationStatus` models
+  - Implement lifecycle management (start/stop)
+  - Add task execution with status tracking
+  - Create demo scripts and documentation
   - _Requirements: 7.1, 7.2, 7.5_
 
-- [ ] 30. Add status display to Gradio UI
-  - Add status textbox component to UI
-  - Implement `check_status()` function for periodic updates
+- [ ] 29. Integrate hybrid execution in main application
+  - Initialize both AsyncExecutor and LeRobotAsyncClient in app.py
+  - Update `mortis_reply()` to route gestures to AsyncExecutor
+  - Update `mortis_reply()` to route manipulation to LeRobotAsyncClient
+  - Implement proper lifecycle management (start on app load, stop on unload)
+  - Handle errors from both systems
+  - _Requirements: 7.1, 7.2, 7.5_
+
+- [ ] 30. Add hybrid status display to Gradio UI
+  - Add status textbox component to UI for robot status
+  - Implement `check_status()` function that monitors both systems
+  - Check AsyncExecutor for gesture status updates
+  - Check LeRobotAsyncClient for manipulation status
   - Configure Gradio to poll status every 500ms
-  - Display task progress, completion, and errors
-  - Add visual indicators for different task states
+  - Display appropriate icons and messages for each system
+  - Add visual indicators for different task states (idle, running, complete, failed)
   - _Requirements: 7.3, 7.4, 7.5_
 
-- [ ] 31. Update main flow for async execution
-  - Modify `mortis_reply()` to submit tasks asynchronously
-  - Return immediate response while task executes in background
-  - Implement task queuing for multiple requests
-  - Add concurrent request handling
-  - _Requirements: 7.1, 7.2, 7.5_
+- [ ] 31. Test and validate hybrid execution system
+  - Test gesture execution via AsyncExecutor
+  - Test manipulation execution via LeRobotAsyncClient
+  - Verify both systems can run concurrently
+  - Test status updates from both systems
+  - Verify UI remains responsive during long manipulation tasks
+  - Test error handling in both systems
+  - Validate proper cleanup on app shutdown
+  - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_
 
-- [ ]* 31.1 Write async execution tests
-  - Test task queue operations
-  - Test background worker thread
-  - Test status updates and retrieval
-  - Verify UI remains responsive during long tasks
-  - Test concurrent task submission
+- [ ]* 31.1 Write integration tests for hybrid system
+  - Test AsyncExecutor with mock gesture executor
+  - Test LeRobotAsyncClient with mock PolicyServer/RobotClient
+  - Test routing logic (gesture vs manipulation)
+  - Test concurrent execution of gestures and manipulation
+  - Verify status updates from both systems
+  - Test error recovery and fallback behavior
   - _Requirements: 7.1, 7.2, 7.3, 7.5_
 
 
