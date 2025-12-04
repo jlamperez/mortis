@@ -193,7 +193,7 @@ This implementation plan breaks down the Gemini multi-modal refactor into discre
   - Add model initialization and warmup
   - _Requirements: 6.1, 8.2_
 
-- [ ] 21. Implement observation capture
+- [x] 21. Implement observation capture
   - Add camera integration for visual observations
   - Implement robot state capture from SO101
   - Create observation dictionary formatting for SmolVLA

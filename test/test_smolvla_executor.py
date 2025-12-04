@@ -308,5 +308,198 @@ class TestSmolVLAExecutorExecution:
                     mock_robot.move_arm.assert_called()
 
 
+class TestObservationCapture:
+    """Test suite for observation capture functionality."""
+    
+    def test_capture_robot_state_success(self, temp_checkpoint_dir):
+        """Test successful robot state capture."""
+        import torch
+        
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            # Create mock robot arm
+            mock_robot = Mock()
+            mock_robot.robot.get_observation.return_value = {
+                "shoulder_pan.pos": 10.0,
+                "shoulder_lift.pos": -20.0,
+                "elbow_flex.pos": 30.0,
+                "wrist_flex.pos": -40.0,
+                "wrist_roll.pos": 50.0,
+                "gripper.pos": 60.0
+            }
+            
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                robot_arm=mock_robot,
+                device="cpu"
+            )
+            
+            # Capture state
+            state_tensor = executor._capture_robot_state()
+            
+            # Verify shape and values
+            assert state_tensor.shape == (1, 6)
+            assert state_tensor[0, 0].item() == 10.0
+            assert state_tensor[0, 5].item() == 60.0
+    
+    def test_capture_robot_state_failure_fallback(self, temp_checkpoint_dir):
+        """Test robot state capture falls back to zeros on error."""
+        import torch
+        
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            # Create mock robot that raises error
+            mock_robot = Mock()
+            mock_robot.robot.get_observation.side_effect = Exception("Connection error")
+            
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                robot_arm=mock_robot,
+                device="cpu"
+            )
+            
+            # Should not raise, should return zeros
+            state_tensor = executor._capture_robot_state()
+            
+            # Verify fallback to zeros
+            assert state_tensor.shape == (1, 6)
+            assert torch.all(state_tensor == 0.0)
+    
+    def test_capture_camera_images_with_camera(self, temp_checkpoint_dir):
+        """Test camera image capture with available camera."""
+        import torch
+        import numpy as np
+        
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                device="cpu"
+            )
+            
+            # Mock camera
+            mock_camera = Mock()
+            mock_camera.read.return_value = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+            executor.camera = mock_camera
+            
+            # Capture images
+            image_tensors = executor._capture_camera_images()
+            
+            # Should return 3 images
+            assert len(image_tensors) == 3
+            
+            # Verify shape (should be resized to 256x256)
+            for img_tensor in image_tensors:
+                assert img_tensor.shape == (1, 3, 256, 256)
+    
+    def test_capture_camera_images_without_camera(self, temp_checkpoint_dir):
+        """Test camera image capture without camera (dummy images)."""
+        import torch
+        
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                device="cpu"
+            )
+            
+            # No camera
+            executor.camera = None
+            
+            # Capture images
+            image_tensors = executor._capture_camera_images()
+            
+            # Should return 3 dummy images
+            assert len(image_tensors) == 3
+            
+            # Verify shape
+            for img_tensor in image_tensors:
+                assert img_tensor.shape == (1, 3, 256, 256)
+                # Dummy images should be all zeros
+                assert torch.all(img_tensor == 0.0)
+    
+    def test_preprocess_image(self, temp_checkpoint_dir):
+        """Test image preprocessing."""
+        import torch
+        import numpy as np
+        
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                device="cpu"
+            )
+            
+            # Create test image (640x480x3)
+            test_image = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+            
+            # Preprocess
+            processed = executor._preprocess_image(test_image)
+            
+            # Verify output shape (should be resized to 256x256)
+            assert processed.shape == (1, 3, 256, 256)
+            
+            # Verify normalization (values should be in [0, 1])
+            assert processed.min() >= 0.0
+            assert processed.max() <= 1.0
+    
+    def test_get_observation_complete(self, temp_checkpoint_dir):
+        """Test complete observation capture."""
+        import torch
+        import numpy as np
+        
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            # Create mock robot
+            mock_robot = Mock()
+            mock_robot.robot.get_observation.return_value = {
+                "shoulder_pan.pos": 0.0,
+                "shoulder_lift.pos": 0.0,
+                "elbow_flex.pos": 0.0,
+                "wrist_flex.pos": 0.0,
+                "wrist_roll.pos": 0.0,
+                "gripper.pos": 0.0
+            }
+            
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                robot_arm=mock_robot,
+                device="cpu"
+            )
+            
+            # Mock camera
+            mock_camera = Mock()
+            mock_camera.read.return_value = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+            executor.camera = mock_camera
+            
+            # Get observation
+            obs = executor._get_observation()
+            
+            # Verify structure
+            assert "observation.state" in obs
+            assert "observation.images.camera1" in obs
+            assert "observation.images.camera2" in obs
+            assert "observation.images.camera3" in obs
+            
+            # Verify shapes
+            assert obs["observation.state"].shape == (1, 6)
+            assert obs["observation.images.camera1"].shape == (1, 3, 256, 256)
+            assert obs["observation.images.camera2"].shape == (1, 3, 256, 256)
+            assert obs["observation.images.camera3"].shape == (1, 3, 256, 256)
+    
+    def test_create_dummy_image(self, temp_checkpoint_dir):
+        """Test dummy image creation."""
+        import torch
+        
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                device="cpu"
+            )
+            
+            # Create dummy image
+            dummy = executor._create_dummy_image()
+            
+            # Verify shape
+            assert dummy.shape == (1, 3, 256, 256)
+            
+            # Should be all zeros
+            assert torch.all(dummy == 0.0)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
