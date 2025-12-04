@@ -335,6 +335,13 @@ class SmolVLAExecutor:
         """
         Internal method to execute the task inference loop.
         
+        This method implements the core inference loop:
+        1. Capture visual and state observations
+        2. Run SmolVLA inference to predict next action
+        3. Execute action on robot
+        4. Check for task completion
+        5. Repeat until complete or max_steps reached
+        
         Args:
             command: The manipulation command to execute
             max_steps: Maximum number of steps
@@ -342,28 +349,57 @@ class SmolVLAExecutor:
         Returns:
             True if task completed, False if max steps reached
         """
+        # Reset task completion tracking variables
+        self._previous_action = None
+        self._stable_count = 0
+        
+        # Track execution metrics
+        start_time = time.time()
+        last_progress_log = 0
+        progress_log_interval = 50  # Log every 50 steps
+        
         with torch.no_grad():
             for step in range(max_steps):
+                # Log progress periodically
+                if step - last_progress_log >= progress_log_interval:
+                    elapsed = time.time() - start_time
+                    fps = step / elapsed if elapsed > 0 else 0
+                    logger.info(
+                        f"Execution progress: step {step}/{max_steps} "
+                        f"({step/max_steps*100:.1f}%) - {fps:.1f} FPS"
+                    )
+                    last_progress_log = step
+                
                 # Capture current observation
                 observation = self._get_observation()
                 
-                # Add task instruction
-                observation["task"] = command
+                # Add task instruction (SmolVLA expects task as list of strings)
+                observation["task"] = [command]
                 
-                # Run inference
+                # Run inference to predict next action
                 action = self.policy.select_action(observation)
                 
                 # Send action to robot
                 self._send_action(action)
                 
                 # Check if task is complete
-                if self._is_task_complete(observation, step):
-                    logger.info(f"Task completed at step {step}")
+                if self._is_task_complete(observation, step, action):
+                    elapsed = time.time() - start_time
+                    logger.info(
+                        f"Task completed at step {step} "
+                        f"(elapsed: {elapsed:.2f}s, avg FPS: {step/elapsed:.1f})"
+                    )
                     return True
                 
-                # Small delay between steps
-                time.sleep(0.033)  # ~30 FPS
+                # Small delay between steps to maintain ~30 FPS
+                time.sleep(0.033)
         
+        # Max steps reached without completion
+        elapsed = time.time() - start_time
+        logger.warning(
+            f"Task did not complete within {max_steps} steps "
+            f"(elapsed: {elapsed:.2f}s)"
+        )
         return False
     
     def _get_observation(self) -> Dict[str, torch.Tensor]:
@@ -526,33 +562,60 @@ class SmolVLAExecutor:
         """
         Send predicted action to robot.
         
+        Converts the action tensor from SmolVLA to SO101 command format
+        and sends it to the robot arm for execution.
+        
         Args:
             action: Action tensor from policy (shape: [batch, action_dim])
+            
+        Raises:
+            SmolVLAError: If action execution fails
         """
-        # Convert action tensor to robot command dictionary
-        action_dict = self._action_to_dict(action)
-        
-        # Send to robot
-        self.robot_arm.robot.send_action(action_dict)
+        try:
+            # Convert action tensor to robot command dictionary
+            action_dict = self._action_to_dict(action)
+            
+            # Send to robot
+            self.robot_arm.robot.send_action(action_dict)
+            
+            # Log action at debug level (verbose)
+            logger.debug(f"Action sent: {action_dict}")
+            
+        except Exception as e:
+            logger.error(f"Failed to send action to robot: {e}")
+            raise SmolVLAError(f"Action execution failed: {e}")
     
     def _action_to_dict(self, action: torch.Tensor) -> Dict[str, float]:
         """
         Convert action tensor to SO101 command format.
         
+        Maps the action tensor dimensions to SO101 joint names and converts
+        to the dictionary format expected by the robot driver.
+        
         Args:
-            action: Action tensor from policy
+            action: Action tensor from policy (shape: [batch, 6] or [6])
             
         Returns:
-            Dictionary mapping joint names to positions
+            Dictionary mapping joint names to positions (in degrees or normalized units)
+            
+        Raises:
+            SmolVLAError: If action tensor has invalid shape
         """
         # Remove batch dimension if present
         if action.dim() > 1:
             action = action.squeeze(0)
         
+        # Validate action dimension
+        if action.shape[0] != 6:
+            raise SmolVLAError(
+                f"Invalid action shape: expected 6 dimensions, got {action.shape[0]}"
+            )
+        
         # Convert to numpy
         action_np = action.cpu().numpy()
         
         # Map action dimensions to joint names
+        # Order must match the training data format
         joint_names = [
             "shoulder_pan.pos",
             "shoulder_lift.pos",
@@ -570,23 +633,77 @@ class SmolVLAExecutor:
         
         return action_dict
     
-    def _is_task_complete(self, observation: Dict[str, torch.Tensor], step: int) -> bool:
+    def _is_task_complete(
+        self,
+        observation: Dict[str, torch.Tensor],
+        step: int,
+        action: torch.Tensor
+    ) -> bool:
         """
         Determine if the task is complete.
         
-        This is a simple heuristic based on step count. In a production system,
-        this could use a learned termination classifier or other criteria.
+        This method uses multiple heuristics to detect task completion:
+        1. Minimum step count (ensure task has progressed)
+        2. Maximum step count (assume completion after sufficient time)
+        3. Action stability (detect when robot has settled)
+        
+        In a production system, this could be enhanced with:
+        - Learned termination classifier
+        - Visual goal detection
+        - Force/torque feedback
+        - Success detection from camera
         
         Args:
-            observation: Current observation
+            observation: Current observation dictionary
             step: Current step number
+            action: Predicted action tensor
             
         Returns:
             True if task should be considered complete
         """
-        # Simple heuristic: assume task takes ~400 steps
-        # This should be replaced with a learned termination condition
-        return step >= 400
+        # Minimum steps before considering completion (allow task to progress)
+        MIN_STEPS = 100
+        
+        # Maximum steps - assume task is complete after this many steps
+        # Most manipulation tasks should complete within 400-450 steps at 30 FPS
+        # (approximately 13-15 seconds)
+        MAX_STEPS = 450
+        
+        # Early exit: not enough steps yet
+        if step < MIN_STEPS:
+            return False
+        
+        # Late exit: max steps reached, consider complete
+        if step >= MAX_STEPS:
+            logger.info(f"Task completion: max steps ({MAX_STEPS}) reached")
+            return True
+        
+        # Check for action stability (robot has settled into final position)
+        if hasattr(self, '_previous_action') and self._previous_action is not None:
+            action_diff = torch.abs(action - self._previous_action).max().item()
+            
+            # If action changes are very small, robot may have settled
+            if action_diff < 0.01:  # Threshold for "stable" action
+                if not hasattr(self, '_stable_count'):
+                    self._stable_count = 0
+                self._stable_count += 1
+                
+                # If stable for 30 consecutive steps (~1 second), consider complete
+                if self._stable_count >= 30:
+                    logger.info(
+                        f"Task completion: action stability detected at step {step} "
+                        f"(stable for {self._stable_count} steps)"
+                    )
+                    return True
+            else:
+                # Reset stability counter if action changes significantly
+                self._stable_count = 0
+        
+        # Store current action for next comparison
+        self._previous_action = action.clone()
+        
+        # Not complete yet
+        return False
     
     def _emergency_stop(self):
         """

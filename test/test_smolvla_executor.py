@@ -132,6 +132,23 @@ class TestSmolVLAExecutor:
             assert len(action_dict) == 6
             assert action_dict["shoulder_pan.pos"] == 10.0
     
+    def test_action_to_dict_invalid_shape(self, temp_checkpoint_dir):
+        """Test action conversion with invalid shape raises error."""
+        import torch
+        
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                device="cpu"
+            )
+            
+            # Create action with wrong number of dimensions
+            invalid_action = torch.tensor([10.0, -20.0, 30.0])  # Only 3 dimensions
+            
+            # Should raise SmolVLAError
+            with pytest.raises(SmolVLAError, match="Invalid action shape"):
+                executor._action_to_dict(invalid_action)
+    
     def test_is_task_complete_heuristic(self, temp_checkpoint_dir):
         """Test task completion heuristic."""
         import torch
@@ -148,11 +165,86 @@ class TestSmolVLAExecutor:
                 "observation.state": torch.zeros((1, 6))
             }
             
+            # Create dummy action
+            action = torch.zeros((1, 6))
+            
             # Test at different steps
-            assert not executor._is_task_complete(obs, step=0)
-            assert not executor._is_task_complete(obs, step=200)
-            assert executor._is_task_complete(obs, step=400)
-            assert executor._is_task_complete(obs, step=500)
+            assert not executor._is_task_complete(obs, step=0, action=action)
+            assert not executor._is_task_complete(obs, step=200, action=action)
+            assert executor._is_task_complete(obs, step=450, action=action)
+            assert executor._is_task_complete(obs, step=500, action=action)
+    
+    def test_is_task_complete_stability_detection(self, temp_checkpoint_dir):
+        """Test task completion via action stability detection."""
+        import torch
+        
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                device="cpu"
+            )
+            
+            # Reset tracking variables
+            executor._previous_action = None
+            executor._stable_count = 0
+            
+            # Create dummy observation
+            obs = {
+                "observation.image": torch.zeros((1, 3, 224, 224)),
+                "observation.state": torch.zeros((1, 6))
+            }
+            
+            # Create stable action (same action repeated)
+            stable_action = torch.tensor([[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]])
+            
+            # First call at step 100 - not complete yet
+            assert not executor._is_task_complete(obs, step=100, action=stable_action)
+            
+            # Repeat same action 30 times (should trigger stability detection)
+            for i in range(30):
+                result = executor._is_task_complete(obs, step=100 + i, action=stable_action)
+                if i < 29:
+                    assert not result, f"Should not complete at iteration {i}"
+                else:
+                    assert result, "Should complete after 30 stable steps"
+    
+    def test_is_task_complete_stability_reset(self, temp_checkpoint_dir):
+        """Test that stability counter resets when action changes."""
+        import torch
+        
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                device="cpu"
+            )
+            
+            # Reset tracking variables
+            executor._previous_action = None
+            executor._stable_count = 0
+            
+            # Create dummy observation
+            obs = {
+                "observation.image": torch.zeros((1, 3, 224, 224)),
+                "observation.state": torch.zeros((1, 6))
+            }
+            
+            # Create stable action
+            stable_action = torch.tensor([[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]])
+            
+            # Build up stability count
+            for i in range(20):
+                executor._is_task_complete(obs, step=100 + i, action=stable_action)
+            
+            # Verify stability count is building
+            # Note: First iteration doesn't increment (no previous action to compare)
+            assert executor._stable_count == 19
+            
+            # Now change action significantly
+            different_action = torch.tensor([[10.0, 20.0, 30.0, 40.0, 50.0, 60.0]])
+            executor._is_task_complete(obs, step=120, action=different_action)
+            
+            # Stability count should reset
+            assert executor._stable_count == 0
     
     def test_create_dummy_observation(self, temp_checkpoint_dir):
         """Test creation of dummy observation for warmup."""
