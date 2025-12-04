@@ -21,7 +21,9 @@ GESTURES = {
     ],
     "wave": [
         ({"wrist_flex.pos": -40}, 0.5),
-        ({"shoulder_pan.pos": -5, "shoulder_lift.pos": 75, "elbow_flex.pos": -68}, 1),
+        ({"shoulder_pan.pos": -5, "shoulder_lift.pos": 65, "elbow_flex.pos": -70}, 1),
+        ({"shoulder_lift.pos": 0, "elbow_flex.pos": 0}, 0.5),
+        ({"wrist_flex.pos": 0}, 0.5),
         (HOME_POSE, 1.0),
     ],
     "point_left": [
