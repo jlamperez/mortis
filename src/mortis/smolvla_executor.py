@@ -117,6 +117,7 @@ class SmolVLAExecutor:
         self.camera = None
         self.policy = None
         self.preprocessor = None
+        self.postprocessor = None
         
         self.checkpoint_path = Path(checkpoint_path)
         
@@ -232,13 +233,13 @@ class SmolVLAExecutor:
             logger.info("Loading preprocessor from checkpoint...")
             
             # Load preprocessor and postprocessor using policy config
-            self.preprocessor, _ = make_pre_post_processors(
+            self.preprocessor, self.postprocessor = make_pre_post_processors(
                 self.policy.config,
                 pretrained_path=str(self.checkpoint_path),
                 device=self.device
             )
             
-            logger.info("Preprocessor loaded successfully")
+            logger.info("Preprocessor and postprocessor loaded successfully")
             
         except Exception as e:
             logger.error(f"Failed to load preprocessor: {e}")
@@ -299,63 +300,6 @@ class SmolVLAExecutor:
             observation = self.preprocessor(observation)
         
         return observation
-    
-    def _init_camera(self):
-        """
-        Initialize camera for visual observations.
-        
-        Attempts to initialize cameras in the following order:
-        1. Intel RealSense camera (if available)
-        2. OpenCV camera (fallback)
-        
-        Raises:
-            SmolVLAError: If camera initialization fails
-        """
-        if self.camera is not None:
-            return  # Already initialized
-        
-        try:
-            # Try Intel RealSense first (preferred for depth sensing)
-            try:
-                from lerobot.common.robot_devices.cameras.intelrealsense import IntelRealSenseCamera
-                logger.info("Attempting to initialize Intel RealSense camera...")
-                self.camera = IntelRealSenseCamera(
-                    camera_index=0,
-                    fps=30,
-                    width=640,
-                    height=480,
-                    use_depth=False  # RGB only for now
-                )
-                self.camera.connect()
-                logger.info("Intel RealSense camera initialized successfully")
-                return
-            except Exception as e:
-                logger.debug(f"Intel RealSense not available: {e}")
-            
-            # Fallback to OpenCV camera
-            try:
-                from lerobot.common.robot_devices.cameras.opencv import OpenCVCamera
-                logger.info("Attempting to initialize OpenCV camera...")
-                self.camera = OpenCVCamera(
-                    camera_index=0,
-                    fps=30,
-                    width=640,
-                    height=480
-                )
-                self.camera.connect()
-                logger.info("OpenCV camera initialized successfully")
-                return
-            except Exception as e:
-                logger.debug(f"OpenCV camera not available: {e}")
-            
-            # If both fail, log warning but don't raise error
-            # This allows the system to run with dummy images for testing
-            logger.warning("No camera available. Using dummy images for observations.")
-            self.camera = None
-            
-        except Exception as e:
-            logger.error(f"Failed to initialize camera: {e}")
-            raise SmolVLAError(f"Camera initialization failed: {e}")
     
     def validate_command(self, command: str) -> bool:
         """
@@ -430,10 +374,6 @@ class SmolVLAExecutor:
                 self.robot_arm.connect()
                 if not self.robot_arm.connected:
                     raise SmolVLAError("Failed to connect to robot arm")
-            
-            # Initialize camera if needed
-            if self.camera is None:
-                self._init_camera()
             
             # Use provided timeout or default
             execution_timeout = timeout if timeout is not None else self.timeout
@@ -565,22 +505,28 @@ class SmolVLAExecutor:
                     # Apply preprocessor (tokenizes task string automatically)
                     observation = self.preprocessor(observation)
                     
-                    # Run inference to predict next action
-                    action = self._run_inference_with_oom_handling(observation)
+                    # Run inference to predict next action (normalized)
+                    action_normalized = self._run_inference_with_oom_handling(observation)
                     
-                    # Debug: log action type and shape
-                    logger.debug(f"Action type: {type(action)}, shape: {action.shape if hasattr(action, 'shape') else 'N/A'}")
+                    # Debug: log normalized action
+                    logger.debug(f"Normalized action type: {type(action_normalized)}, shape: {action_normalized.shape if hasattr(action_normalized, 'shape') else 'N/A'}")
                     
-                    # Validate action safety
+                    # Denormalize action using postprocessor
+                    action = self.postprocessor(action_normalized)
+                    
+                    # Debug: log denormalized action
+                    logger.debug(f"Denormalized action: {action}")
+                    
+                    # Validate action safety (on denormalized action)
                     if self.enable_safety_checks:
                         self._check_action_safety(action, observation)
                     
                     # Send action to robot
                     self._send_action(action)
                     
-                    # Check if task is complete
+                    # Check if task is complete (use normalized action for stability check)
                     try:
-                        is_complete = self._is_task_complete(observation, step, action)
+                        is_complete = self._is_task_complete(observation, step, action_normalized)
                         if is_complete:
                             elapsed = time.time() - start_time
                             logger.info(
@@ -617,9 +563,7 @@ class SmolVLAExecutor:
         """
         Get current robot observation (image + state).
         
-        Captures:
-        - Visual observations from camera(s)
-        - Robot joint state (positions)
+        Captures robot state from robot.get_observation() and images from cameras.
         
         Returns:
             Dictionary with observation tensors formatted for SmolVLA:
@@ -628,22 +572,79 @@ class SmolVLAExecutor:
             - observation.images.camera3: RGB image tensor [1, 3, H, W] (if available)
             - observation.state: Joint positions tensor [1, 6]
         """
-        # 1. Capture robot state
-        state_tensor = self._capture_robot_state()
+        try:
+            # Get robot state (joint positions)
+            robot_obs = self.robot_arm.robot.get_observation()
+            
+            # Extract joint positions in order
+            joint_names = [
+                "shoulder_pan.pos",
+                "shoulder_lift.pos",
+                "elbow_flex.pos",
+                "wrist_flex.pos",
+                "wrist_roll.pos",
+                "gripper.pos"
+            ]
+            
+            # Build state vector
+            state_values = [robot_obs[name] for name in joint_names]
+            state_tensor = torch.tensor(
+                state_values,
+                dtype=torch.float32,
+                device=self.device
+            ).unsqueeze(0)  # Add batch dimension
+            
+            # Get camera images (robot.cameras is a dict of camera objects)
+            observation = {"observation.state": state_tensor}
+            
+            if hasattr(self.robot_arm.robot, 'cameras') and self.robot_arm.robot.cameras:
+                # Get images from robot's cameras
+                for i, (camera_name, camera) in enumerate(self.robot_arm.robot.cameras.items(), start=1):
+                    try:
+                        image = camera.read()
+                        # Convert to tensor: (H, W, C) -> (1, C, H, W)
+                        image_tensor = torch.from_numpy(image).float().permute(2, 0, 1).unsqueeze(0).to(self.device) / 255.0
+                        observation[f"observation.images.camera{i}"] = image_tensor
+                        logger.debug(f"Captured image from {camera_name}: shape={image.shape}")
+                    except Exception as e:
+                        logger.warning(f"Failed to read from {camera_name}: {e}")
+                        observation[f"observation.images.camera{i}"] = self._create_dummy_image()
+            else:
+                logger.debug("No cameras configured on robot, using dummy images")
+            
+            # Ensure we have 3 camera images (duplicate if needed)
+            for i in range(1, 4):
+                key = f"observation.images.camera{i}"
+                if key not in observation:
+                    # Use first camera or dummy
+                    if "observation.images.camera1" in observation:
+                        observation[key] = observation["observation.images.camera1"].clone()
+                    else:
+                        observation[key] = self._create_dummy_image()
+            
+            logger.debug(f"Captured observation with keys: {list(observation.keys())}")
+            return observation
+            
+        except Exception as e:
+            logger.warning(f"Failed to get robot observation: {e}. Using dummy observation.")
+            return self._create_dummy_observation_without_task()
+    
+    def _create_dummy_observation_without_task(self) -> Dict[str, torch.Tensor]:
+        """
+        Create a dummy observation without task string (for error recovery).
         
-        # 2. Capture visual observations
-        image_tensors = self._capture_camera_images()
+        Returns:
+            Dictionary with dummy observation tensors
+        """
+        dummy_state = torch.zeros(1, 6, dtype=torch.float32, device=self.device)
+        dummy_image = self._create_dummy_image()
         
-        # 3. Format observation dictionary for SmolVLA
-        observation = {
-            "observation.state": state_tensor
+        return {
+            "observation.images.camera1": dummy_image,
+            "observation.images.camera2": dummy_image.clone(),
+            "observation.images.camera3": dummy_image.clone(),
+            "observation.state": dummy_state,
         }
-        
-        # Add camera images
-        for i, img_tensor in enumerate(image_tensors, start=1):
-            observation[f"observation.images.camera{i}"] = img_tensor
-        
-        return observation
     
     def _add_task_string(self, observation: Dict[str, torch.Tensor], command: str) -> Dict[str, torch.Tensor]:
         """
@@ -665,119 +666,6 @@ class SmolVLAExecutor:
         logger.debug(f"Added task string: '{command}'")
         
         return observation
-    
-    def _capture_robot_state(self) -> torch.Tensor:
-        """
-        Capture current robot joint state.
-        
-        Returns:
-            Tensor of joint positions [1, 6] with batch dimension
-        """
-        try:
-            # Get robot observation (includes joint positions)
-            robot_obs = self.robot_arm.robot.get_observation()
-            
-            # Extract joint positions in order
-            joint_names = [
-                "shoulder_pan.pos",
-                "shoulder_lift.pos",
-                "elbow_flex.pos",
-                "wrist_flex.pos",
-                "wrist_roll.pos",
-                "gripper.pos"
-            ]
-            
-            # Build state vector from joint positions
-            state_values = [robot_obs[name] for name in joint_names]
-            state_tensor = torch.tensor(
-                state_values,
-                dtype=torch.float32,
-                device=self.device
-            )
-            
-            # Add batch dimension
-            state_tensor = state_tensor.unsqueeze(0)
-            
-            logger.debug(f"Robot state captured: {state_values}")
-            
-        except Exception as e:
-            logger.warning(f"Failed to get robot observation: {e}. Using zero state.")
-            # Fallback to zero state with batch dimension
-            state_tensor = torch.zeros(1, 6, dtype=torch.float32, device=self.device)
-        
-        return state_tensor
-    
-    def _capture_camera_images(self) -> list:
-        """
-        Capture images from available cameras.
-        
-        Returns:
-            List of image tensors [1, 3, H, W] with batch dimension
-        """
-        image_tensors = []
-        
-        if self.camera is not None:
-            try:
-                # Read image from camera
-                image = self.camera.read()
-                
-                # Convert to tensor and preprocess
-                image_tensor = self._preprocess_image(image)
-                
-                # Add to list (camera1)
-                image_tensors.append(image_tensor)
-                
-                logger.debug(f"Camera image captured: shape={image.shape}")
-                
-            except Exception as e:
-                logger.warning(f"Failed to capture camera image: {e}. Using dummy image.")
-                # Fallback to dummy image
-                image_tensors.append(self._create_dummy_image())
-        else:
-            # No camera available, use dummy image
-            logger.debug("No camera available, using dummy image")
-            image_tensors.append(self._create_dummy_image())
-        
-        # For now, duplicate the first image for camera2 and camera3
-        # In a multi-camera setup, these would be separate captures
-        while len(image_tensors) < 3:
-            image_tensors.append(image_tensors[0].clone())
-        
-        return image_tensors
-    
-    def _preprocess_image(self, image: np.ndarray) -> torch.Tensor:
-        """
-        Preprocess camera image for SmolVLA input.
-        
-        Args:
-            image: Raw image from camera (H, W, 3) in BGR or RGB format
-            
-        Returns:
-            Preprocessed image tensor [1, 3, H, W] with batch dimension
-        """
-        # Convert BGR to RGB if needed (OpenCV uses BGR)
-        if image.shape[2] == 3:
-            # Assume BGR from OpenCV, convert to RGB
-            image = image[:, :, ::-1].copy()
-        
-        # Resize to expected input size (256x256 based on training config)
-        pil_image = PILImage.fromarray(image)
-        pil_image = pil_image.resize((256, 256), PILImage.BILINEAR)
-        image = np.array(pil_image)
-        
-        # Convert to tensor: (H, W, C) -> (C, H, W)
-        image_tensor = torch.from_numpy(image).permute(2, 0, 1).float()
-        
-        # Normalize to [0, 1]
-        image_tensor = image_tensor / 255.0
-        
-        # Move to device
-        image_tensor = image_tensor.to(self.device)
-        
-        # Add batch dimension
-        image_tensor = image_tensor.unsqueeze(0)
-        
-        return image_tensor
     
     def _create_dummy_image(self) -> torch.Tensor:
         """
