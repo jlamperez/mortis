@@ -9,7 +9,8 @@ import os
 import time
 import logging
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
+from threading import Lock, Event
 
 import torch
 import numpy as np
@@ -29,6 +30,21 @@ logger = logging.getLogger(__name__)
 
 class SmolVLAError(Exception):
     """Base exception for SmolVLA executor errors."""
+    pass
+
+
+class SafetyViolationError(SmolVLAError):
+    """Exception raised when a safety constraint is violated."""
+    pass
+
+
+class TimeoutError(SmolVLAError):
+    """Exception raised when execution exceeds timeout."""
+    pass
+
+
+class GPUOutOfMemoryError(SmolVLAError):
+    """Exception raised when GPU runs out of memory."""
     pass
 
 
@@ -59,11 +75,30 @@ class SmolVLAExecutor:
         "Pick up the eyeball and place it in the purple cup",
     ]
     
+    # Safety limits for joint positions (in degrees)
+    # These define the safe workspace boundaries
+    JOINT_LIMITS = {
+        "shoulder_pan.pos": (-180, 180),
+        "shoulder_lift.pos": (-90, 90),
+        "elbow_flex.pos": (-135, 135),
+        "wrist_flex.pos": (-90, 90),
+        "wrist_roll.pos": (-180, 180),
+        "gripper.pos": (0, 100),  # 0=open, 100=closed
+    }
+    
+    # Maximum allowed joint velocity (degrees per step)
+    MAX_JOINT_VELOCITY = 10.0
+    
+    # Default execution timeout (seconds)
+    DEFAULT_TIMEOUT = 30.0
+    
     def __init__(
         self,
         checkpoint_path: str,
         robot_arm: Optional[MortisArm] = None,
-        device: Optional[str] = None
+        device: Optional[str] = None,
+        enable_safety_checks: bool = True,
+        timeout: Optional[float] = None
     ):
         """
         Initialize the SmolVLA executor.
@@ -72,6 +107,8 @@ class SmolVLAExecutor:
             checkpoint_path: Path to the trained SmolVLA model checkpoint
             robot_arm: Optional MortisArm instance (will create if not provided)
             device: Device to run inference on ('cuda', 'cpu', or None for auto-detect)
+            enable_safety_checks: Whether to enable workspace safety checks
+            timeout: Execution timeout in seconds (None for default)
             
         Raises:
             SmolVLAError: If checkpoint path doesn't exist or model loading fails
@@ -93,6 +130,21 @@ class SmolVLAExecutor:
             self.device = device
         
         logger.info(f"Initializing SmolVLA executor on device: {self.device}")
+        
+        # Safety configuration
+        self.enable_safety_checks = enable_safety_checks
+        self.timeout = timeout if timeout is not None else self.DEFAULT_TIMEOUT
+        
+        # Emergency stop flag and lock
+        self._emergency_stop_flag = Event()
+        self._execution_lock = Lock()
+        self._is_executing = False
+        
+        # Previous state for velocity checking
+        self._previous_state = None
+        
+        logger.info(f"Safety checks: {'enabled' if enable_safety_checks else 'disabled'}")
+        logger.info(f"Execution timeout: {self.timeout}s")
         
         # Initialize robot arm
         self.robot_arm = robot_arm
@@ -271,7 +323,25 @@ class SmolVLAExecutor:
         """
         return command in self.VALID_COMMANDS
     
-    def execute(self, command: str, max_steps: int = 500) -> bool:
+    def trigger_emergency_stop(self):
+        """
+        Trigger emergency stop from external thread.
+        
+        This can be called from another thread to safely stop execution.
+        """
+        logger.warning("Emergency stop triggered externally")
+        self._emergency_stop_flag.set()
+    
+    def is_executing(self) -> bool:
+        """
+        Check if executor is currently running a task.
+        
+        Returns:
+            True if a task is being executed
+        """
+        return self._is_executing
+    
+    def execute(self, command: str, max_steps: int = 500, timeout: Optional[float] = None) -> bool:
         """
         Execute a manipulation task using SmolVLA inference.
         
@@ -282,56 +352,114 @@ class SmolVLAExecutor:
         Args:
             command: Natural language task description (must be in VALID_COMMANDS)
             max_steps: Maximum number of inference steps to execute
+            timeout: Optional timeout override (seconds)
             
         Returns:
             True if execution completed successfully, False otherwise
             
         Raises:
             SmolVLAError: If command is invalid or execution fails critically
+            SafetyViolationError: If safety constraints are violated
+            TimeoutError: If execution exceeds timeout
         """
-        # Validate command
-        if not self.validate_command(command):
-            raise SmolVLAError(
-                f"Invalid command: '{command}'. "
-                f"Must be one of: {self.VALID_COMMANDS}"
-            )
-        
-        # Ensure robot is connected
-        if not self.robot_arm.connected:
-            logger.info("Robot not connected, attempting to connect...")
-            self.robot_arm.connect()
-            if not self.robot_arm.connected:
-                raise SmolVLAError("Failed to connect to robot arm")
-        
-        # Initialize camera if needed
-        if self.camera is None:
-            self._init_camera()
-        
-        logger.info(f"Starting SmolVLA execution: '{command}'")
-        logger.info(f"Max steps: {max_steps}")
+        # Acquire execution lock to prevent concurrent execution
+        if not self._execution_lock.acquire(blocking=False):
+            raise SmolVLAError("Executor is already running a task")
         
         try:
-            # Execute the task
-            success = self._execute_task(command, max_steps)
+            # Clear emergency stop flag
+            self._emergency_stop_flag.clear()
+            self._is_executing = True
             
-            if success:
-                logger.info(f"Task completed successfully: '{command}'")
-            else:
-                logger.warning(f"Task did not complete within {max_steps} steps")
+            # Validate command against trained task set
+            if not self.validate_command(command):
+                raise SmolVLAError(
+                    f"Invalid command: '{command}'. "
+                    f"Must be one of: {self.VALID_COMMANDS}"
+                )
             
-            # Return to home position
-            logger.info("Returning to home position...")
-            self.robot_arm.move_arm("idle")
+            # Ensure robot is connected
+            if not self.robot_arm.connected:
+                logger.info("Robot not connected, attempting to connect...")
+                self.robot_arm.connect()
+                if not self.robot_arm.connected:
+                    raise SmolVLAError("Failed to connect to robot arm")
             
-            return success
+            # Initialize camera if needed
+            if self.camera is None:
+                self._init_camera()
             
-        except Exception as e:
-            logger.error(f"Execution failed: {e}")
-            # Emergency stop - return to safe position
-            self._emergency_stop()
-            return False
+            # Use provided timeout or default
+            execution_timeout = timeout if timeout is not None else self.timeout
+            
+            logger.info(f"Starting SmolVLA execution: '{command}'")
+            logger.info(f"Max steps: {max_steps}, Timeout: {execution_timeout}s")
+            logger.info(f"Safety checks: {'enabled' if self.enable_safety_checks else 'disabled'}")
+            
+            try:
+                # Execute the task with timeout
+                success = self._execute_task_with_timeout(command, max_steps, execution_timeout)
+                
+                if success:
+                    logger.info(f"Task completed successfully: '{command}'")
+                else:
+                    logger.warning(f"Task did not complete within constraints")
+                
+                # Return to home position safely
+                logger.info("Returning to home position...")
+                self._safe_return_home()
+                
+                return success
+                
+            except TimeoutError as e:
+                logger.error(f"Execution timeout: {e}")
+                self._emergency_stop()
+                raise
+            except SafetyViolationError as e:
+                logger.error(f"Safety violation: {e}")
+                self._emergency_stop()
+                raise
+            except GPUOutOfMemoryError as e:
+                logger.error(f"GPU out of memory: {e}")
+                self._handle_gpu_oom()
+                self._emergency_stop()
+                raise
+            except Exception as e:
+                logger.error(f"Execution failed: {e}")
+                self._emergency_stop()
+                raise SmolVLAError(f"Execution failed: {e}")
+        
+        finally:
+            # Always release lock and reset execution flag
+            self._is_executing = False
+            self._execution_lock.release()
     
-    def _execute_task(self, command: str, max_steps: int) -> bool:
+    def _execute_task_with_timeout(self, command: str, max_steps: int, timeout: float) -> bool:
+        """
+        Execute task with timeout monitoring.
+        
+        Args:
+            command: The manipulation command
+            max_steps: Maximum steps
+            timeout: Timeout in seconds
+            
+        Returns:
+            True if task completed successfully
+            
+        Raises:
+            TimeoutError: If execution exceeds timeout
+        """
+        start_time = time.time()
+        
+        try:
+            return self._execute_task(command, max_steps, start_time, timeout)
+        except Exception as e:
+            elapsed = time.time() - start_time
+            if elapsed >= timeout:
+                raise TimeoutError(f"Execution exceeded timeout of {timeout}s")
+            raise
+    
+    def _execute_task(self, command: str, max_steps: int, start_time: float, timeout: float) -> bool:
         """
         Internal method to execute the task inference loop.
         
@@ -352,47 +480,71 @@ class SmolVLAExecutor:
         # Reset task completion tracking variables
         self._previous_action = None
         self._stable_count = 0
+        self._previous_state = None
         
         # Track execution metrics
-        start_time = time.time()
         last_progress_log = 0
         progress_log_interval = 50  # Log every 50 steps
         
         with torch.no_grad():
             for step in range(max_steps):
+                # Check for emergency stop
+                if self._emergency_stop_flag.is_set():
+                    logger.warning("Emergency stop detected, aborting execution")
+                    return False
+                
+                # Check timeout
+                elapsed = time.time() - start_time
+                if elapsed >= timeout:
+                    raise TimeoutError(f"Execution exceeded timeout of {timeout}s at step {step}")
+                
                 # Log progress periodically
                 if step - last_progress_log >= progress_log_interval:
-                    elapsed = time.time() - start_time
                     fps = step / elapsed if elapsed > 0 else 0
                     logger.info(
                         f"Execution progress: step {step}/{max_steps} "
-                        f"({step/max_steps*100:.1f}%) - {fps:.1f} FPS"
+                        f"({step/max_steps*100:.1f}%) - {fps:.1f} FPS - {elapsed:.1f}s elapsed"
                     )
                     last_progress_log = step
                 
-                # Capture current observation
-                observation = self._get_observation()
-                
-                # Add task instruction (SmolVLA expects task as list of strings)
-                observation["task"] = [command]
-                
-                # Run inference to predict next action
-                action = self.policy.select_action(observation)
-                
-                # Send action to robot
-                self._send_action(action)
-                
-                # Check if task is complete
-                if self._is_task_complete(observation, step, action):
-                    elapsed = time.time() - start_time
-                    logger.info(
-                        f"Task completed at step {step} "
-                        f"(elapsed: {elapsed:.2f}s, avg FPS: {step/elapsed:.1f})"
-                    )
-                    return True
-                
-                # Small delay between steps to maintain ~30 FPS
-                time.sleep(0.033)
+                try:
+                    # Capture current observation
+                    observation = self._get_observation()
+                    
+                    # Add task instruction (SmolVLA expects task as list of strings)
+                    observation["task"] = [command]
+                    
+                    # Run inference to predict next action
+                    action = self._run_inference_with_oom_handling(observation)
+                    
+                    # Validate action safety
+                    if self.enable_safety_checks:
+                        self._check_action_safety(action, observation)
+                    
+                    # Send action to robot
+                    self._send_action(action)
+                    
+                    # Check if task is complete
+                    if self._is_task_complete(observation, step, action):
+                        elapsed = time.time() - start_time
+                        logger.info(
+                            f"Task completed at step {step} "
+                            f"(elapsed: {elapsed:.2f}s, avg FPS: {step/elapsed:.1f})"
+                        )
+                        return True
+                    
+                    # Small delay between steps to maintain ~30 FPS
+                    time.sleep(0.033)
+                    
+                except torch.cuda.OutOfMemoryError as e:
+                    logger.error(f"GPU out of memory at step {step}")
+                    raise GPUOutOfMemoryError(f"GPU OOM at step {step}: {e}")
+                except SafetyViolationError:
+                    # Re-raise safety violations
+                    raise
+                except Exception as e:
+                    logger.error(f"Error at step {step}: {e}")
+                    raise
         
         # Max steps reached without completion
         elapsed = time.time() - start_time
@@ -705,18 +857,128 @@ class SmolVLAExecutor:
         # Not complete yet
         return False
     
+    def _check_action_safety(self, action: torch.Tensor, observation: Dict[str, torch.Tensor]):
+        """
+        Check if predicted action is safe to execute.
+        
+        Validates:
+        1. Joint position limits
+        2. Joint velocity limits
+        3. Workspace boundaries
+        
+        Args:
+            action: Predicted action tensor
+            observation: Current observation
+            
+        Raises:
+            SafetyViolationError: If action violates safety constraints
+        """
+        # Convert action to dict for checking
+        action_dict = self._action_to_dict(action)
+        
+        # Check joint position limits
+        for joint_name, position in action_dict.items():
+            if joint_name in self.JOINT_LIMITS:
+                min_pos, max_pos = self.JOINT_LIMITS[joint_name]
+                if position < min_pos or position > max_pos:
+                    raise SafetyViolationError(
+                        f"Joint {joint_name} position {position:.2f} exceeds limits "
+                        f"[{min_pos}, {max_pos}]"
+                    )
+        
+        # Check joint velocity limits (if we have previous state)
+        if self._previous_state is not None:
+            current_state = observation["observation.state"].squeeze(0).cpu().numpy()
+            velocity = np.abs(current_state - self._previous_state)
+            max_velocity = np.max(velocity)
+            
+            if max_velocity > self.MAX_JOINT_VELOCITY:
+                raise SafetyViolationError(
+                    f"Joint velocity {max_velocity:.2f} exceeds limit "
+                    f"{self.MAX_JOINT_VELOCITY}"
+                )
+        
+        # Update previous state for next check
+        self._previous_state = observation["observation.state"].squeeze(0).cpu().numpy().copy()
+    
+    def _run_inference_with_oom_handling(self, observation: Dict[str, torch.Tensor]) -> torch.Tensor:
+        """
+        Run inference with GPU out-of-memory handling.
+        
+        Args:
+            observation: Current observation
+            
+        Returns:
+            Predicted action tensor
+            
+        Raises:
+            GPUOutOfMemoryError: If GPU runs out of memory
+        """
+        try:
+            return self.policy.select_action(observation)
+        except torch.cuda.OutOfMemoryError as e:
+            logger.error("GPU out of memory during inference")
+            # Try to recover by clearing cache
+            torch.cuda.empty_cache()
+            # Try one more time
+            try:
+                return self.policy.select_action(observation)
+            except torch.cuda.OutOfMemoryError:
+                raise GPUOutOfMemoryError("GPU out of memory, cannot recover")
+    
+    def _handle_gpu_oom(self):
+        """
+        Handle GPU out-of-memory error by clearing cache and resetting state.
+        """
+        logger.info("Handling GPU out-of-memory error...")
+        
+        if self.device == "cuda":
+            # Clear CUDA cache
+            torch.cuda.empty_cache()
+            
+            # Log memory stats
+            if torch.cuda.is_available():
+                allocated = torch.cuda.memory_allocated() / 1024**3
+                reserved = torch.cuda.memory_reserved() / 1024**3
+                logger.info(f"GPU memory: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved")
+        
+        logger.info("GPU memory cleared")
+    
+    def _safe_return_home(self):
+        """
+        Safely return robot to home position with error handling.
+        """
+        try:
+            self.robot_arm.move_arm("idle")
+            logger.info("Robot returned to home position")
+        except Exception as e:
+            logger.error(f"Failed to return to home position: {e}")
+            # Try direct position command as fallback
+            try:
+                self.robot_arm.robot.send_action(HOME_POSE)
+                logger.info("Robot returned to home using direct command")
+            except Exception as e2:
+                logger.error(f"Direct home command also failed: {e2}")
+    
     def _emergency_stop(self):
         """
         Emergency stop: return robot to safe idle position.
         
         This is called when an error occurs during execution.
+        Sets the emergency stop flag and attempts to safely stop the robot.
         """
         logger.warning("Emergency stop triggered")
+        
+        # Set emergency stop flag
+        self._emergency_stop_flag.set()
+        
         try:
-            self.robot_arm.move_arm("idle")
-            logger.info("Robot returned to safe position")
+            # Try to stop robot immediately
+            self._safe_return_home()
+            logger.info("Emergency stop completed - robot in safe position")
         except Exception as e:
             logger.error(f"Emergency stop failed: {e}")
+            logger.error("MANUAL INTERVENTION MAY BE REQUIRED")
     
     def cleanup(self):
         """

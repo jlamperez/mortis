@@ -10,11 +10,15 @@ import os
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
+import numpy as np
 
 # Import the module to test
 from mortis.smolvla_executor import (
     SmolVLAExecutor,
     SmolVLAError,
+    SafetyViolationError,
+    TimeoutError,
+    GPUOutOfMemoryError,
     init_smolvla_executor
 )
 
@@ -389,14 +393,12 @@ class TestSmolVLAExecutorExecution:
             
             # Mock methods to simulate error
             with patch.object(executor, '_init_camera'):
-                with patch.object(executor, '_execute_task', side_effect=Exception("Test error")):
+                with patch.object(executor, '_execute_task_with_timeout', side_effect=Exception("Test error")):
                     # Execute should handle error and call emergency stop
-                    result = executor.execute("Pick up the skull and place it in the green cup")
+                    with pytest.raises(SmolVLAError, match="Execution failed"):
+                        executor.execute("Pick up the skull and place it in the green cup")
                     
-                    # Should return False on error
-                    assert result is False
-                    
-                    # Should call move_arm to return to idle
+                    # Should call move_arm to return to idle (emergency stop)
                     mock_robot.move_arm.assert_called()
 
 
@@ -591,6 +593,343 @@ class TestObservationCapture:
             
             # Should be all zeros
             assert torch.all(dummy == 0.0)
+
+
+class TestSafetyFeatures:
+    """Test suite for safety and error handling features."""
+    
+    def test_safety_constants_defined(self):
+        """Test that safety constants are properly defined."""
+        assert hasattr(SmolVLAExecutor, 'JOINT_LIMITS')
+        assert hasattr(SmolVLAExecutor, 'MAX_JOINT_VELOCITY')
+        assert hasattr(SmolVLAExecutor, 'DEFAULT_TIMEOUT')
+        
+        # Verify joint limits structure
+        assert len(SmolVLAExecutor.JOINT_LIMITS) == 6
+        assert "shoulder_pan.pos" in SmolVLAExecutor.JOINT_LIMITS
+        assert "gripper.pos" in SmolVLAExecutor.JOINT_LIMITS
+        
+        # Verify limits are tuples of (min, max)
+        for joint, limits in SmolVLAExecutor.JOINT_LIMITS.items():
+            assert len(limits) == 2
+            assert limits[0] < limits[1]
+    
+    def test_init_with_safety_configuration(self, temp_checkpoint_dir):
+        """Test initialization with safety configuration."""
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                device="cpu",
+                enable_safety_checks=True,
+                timeout=60.0
+            )
+            
+            assert executor.enable_safety_checks is True
+            assert executor.timeout == 60.0
+            assert hasattr(executor, '_emergency_stop_flag')
+            assert hasattr(executor, '_execution_lock')
+    
+    def test_init_with_safety_disabled(self, temp_checkpoint_dir):
+        """Test initialization with safety checks disabled."""
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                device="cpu",
+                enable_safety_checks=False
+            )
+            
+            assert executor.enable_safety_checks is False
+    
+    def test_check_action_safety_valid_action(self, temp_checkpoint_dir):
+        """Test safety check with valid action."""
+        import torch
+        
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                device="cpu",
+                enable_safety_checks=True
+            )
+            
+            # Create valid action (within limits)
+            valid_action = torch.tensor([[0.0, 0.0, 0.0, 0.0, 0.0, 50.0]])
+            
+            # Create observation
+            obs = {
+                "observation.state": torch.zeros(1, 6)
+            }
+            
+            # Should not raise
+            executor._check_action_safety(valid_action, obs)
+    
+    def test_check_action_safety_position_limit_violation(self, temp_checkpoint_dir):
+        """Test safety check detects position limit violations."""
+        import torch
+        
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                device="cpu",
+                enable_safety_checks=True
+            )
+            
+            # Create action that exceeds shoulder_pan limit (>180)
+            invalid_action = torch.tensor([[200.0, 0.0, 0.0, 0.0, 0.0, 50.0]])
+            
+            obs = {
+                "observation.state": torch.zeros(1, 6)
+            }
+            
+            # Should raise SafetyViolationError
+            with pytest.raises(SafetyViolationError, match="exceeds limits"):
+                executor._check_action_safety(invalid_action, obs)
+    
+    def test_check_action_safety_velocity_limit_violation(self, temp_checkpoint_dir):
+        """Test safety check detects velocity limit violations."""
+        import torch
+        
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                device="cpu",
+                enable_safety_checks=True
+            )
+            
+            # Set previous state
+            executor._previous_state = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+            
+            # Create action with large velocity change (>10 degrees)
+            obs = {
+                "observation.state": torch.tensor([[20.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
+            }
+            
+            action = torch.tensor([[20.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
+            
+            # Should raise SafetyViolationError
+            with pytest.raises(SafetyViolationError, match="velocity.*exceeds limit"):
+                executor._check_action_safety(action, obs)
+    
+    def test_emergency_stop_flag(self, temp_checkpoint_dir):
+        """Test emergency stop flag functionality."""
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                device="cpu"
+            )
+            
+            # Initially not set
+            assert not executor._emergency_stop_flag.is_set()
+            
+            # Trigger emergency stop
+            executor.trigger_emergency_stop()
+            
+            # Should be set
+            assert executor._emergency_stop_flag.is_set()
+    
+    def test_is_executing_flag(self, temp_checkpoint_dir):
+        """Test execution status tracking."""
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                device="cpu"
+            )
+            
+            # Initially not executing
+            assert not executor.is_executing()
+            
+            # Simulate execution
+            executor._is_executing = True
+            assert executor.is_executing()
+            
+            executor._is_executing = False
+            assert not executor.is_executing()
+    
+    def test_execution_lock_prevents_concurrent_execution(self, temp_checkpoint_dir):
+        """Test that execution lock prevents concurrent task execution."""
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            mock_robot = Mock()
+            mock_robot.connected = True
+            
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                robot_arm=mock_robot,
+                device="cpu"
+            )
+            
+            # Acquire lock manually
+            executor._execution_lock.acquire()
+            
+            try:
+                # Try to execute - should fail immediately
+                with pytest.raises(SmolVLAError, match="already running"):
+                    executor.execute("Pick up the skull and place it in the green cup")
+            finally:
+                executor._execution_lock.release()
+    
+    def test_timeout_handling(self, temp_checkpoint_dir):
+        """Test timeout detection during execution."""
+        import torch
+        
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            mock_robot = Mock()
+            mock_robot.connected = True
+            
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                robot_arm=mock_robot,
+                device="cpu",
+                timeout=0.1  # Very short timeout
+            )
+            
+            # Mock methods
+            with patch.object(executor, '_init_camera'):
+                with patch.object(executor, '_execute_task_with_timeout', side_effect=TimeoutError("Timeout")):
+                    with patch.object(executor, '_emergency_stop'):
+                        # Should raise TimeoutError
+                        with pytest.raises(TimeoutError):
+                            executor.execute("Pick up the skull and place it in the green cup")
+    
+    def test_gpu_oom_handling(self, temp_checkpoint_dir):
+        """Test GPU out-of-memory error handling."""
+        import torch
+        
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                device="cuda"
+            )
+            
+            # Mock policy to raise OOM
+            executor.policy = Mock()
+            executor.policy.select_action.side_effect = torch.cuda.OutOfMemoryError()
+            
+            obs = {"test": "observation"}
+            
+            # Should raise GPUOutOfMemoryError
+            with pytest.raises(GPUOutOfMemoryError):
+                executor._run_inference_with_oom_handling(obs)
+    
+    def test_gpu_oom_recovery(self, temp_checkpoint_dir):
+        """Test GPU OOM recovery after clearing cache."""
+        import torch
+        
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                device="cuda"
+            )
+            
+            # Mock policy to fail once then succeed
+            executor.policy = Mock()
+            call_count = [0]
+            
+            def mock_select_action(obs):
+                call_count[0] += 1
+                if call_count[0] == 1:
+                    raise torch.cuda.OutOfMemoryError()
+                return torch.zeros(1, 6)
+            
+            executor.policy.select_action.side_effect = mock_select_action
+            
+            obs = {"test": "observation"}
+            
+            # Should recover after first failure
+            with patch('torch.cuda.empty_cache'):
+                result = executor._run_inference_with_oom_handling(obs)
+                assert result is not None
+                assert call_count[0] == 2  # Called twice
+    
+    def test_handle_gpu_oom_clears_cache(self, temp_checkpoint_dir):
+        """Test that GPU OOM handler clears CUDA cache."""
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                device="cuda"
+            )
+            
+            with patch('torch.cuda.empty_cache') as mock_empty_cache:
+                with patch('torch.cuda.is_available', return_value=True):
+                    executor._handle_gpu_oom()
+                    
+                    # Should call empty_cache
+                    mock_empty_cache.assert_called_once()
+    
+    def test_safe_return_home(self, temp_checkpoint_dir):
+        """Test safe return to home position."""
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            mock_robot = Mock()
+            
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                robot_arm=mock_robot,
+                device="cpu"
+            )
+            
+            # Should call move_arm with "idle"
+            executor._safe_return_home()
+            mock_robot.move_arm.assert_called_once_with("idle")
+    
+    def test_safe_return_home_with_fallback(self, temp_checkpoint_dir):
+        """Test safe return home with fallback on error."""
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            mock_robot = Mock()
+            mock_robot.move_arm.side_effect = Exception("Move failed")
+            
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                robot_arm=mock_robot,
+                device="cpu"
+            )
+            
+            # Should try fallback (direct command)
+            executor._safe_return_home()
+            
+            # Should have tried move_arm first
+            mock_robot.move_arm.assert_called_once()
+            # Should have tried direct command as fallback
+            mock_robot.robot.send_action.assert_called_once()
+    
+    def test_emergency_stop_sets_flag(self, temp_checkpoint_dir):
+        """Test emergency stop sets the flag."""
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            mock_robot = Mock()
+            
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                robot_arm=mock_robot,
+                device="cpu"
+            )
+            
+            # Initially not set
+            assert not executor._emergency_stop_flag.is_set()
+            
+            # Call emergency stop
+            executor._emergency_stop()
+            
+            # Flag should be set
+            assert executor._emergency_stop_flag.is_set()
+            
+            # Should have tried to return home
+            mock_robot.move_arm.assert_called()
+    
+    def test_command_validation_against_trained_set(self, temp_checkpoint_dir):
+        """Test command validation ensures only trained commands are executed."""
+        with patch.object(SmolVLAExecutor, '_load_model'):
+            mock_robot = Mock()
+            mock_robot.connected = True
+            
+            executor = SmolVLAExecutor(
+                checkpoint_path=temp_checkpoint_dir,
+                robot_arm=mock_robot,
+                device="cpu"
+            )
+            
+            # Valid command should not raise during validation
+            assert executor.validate_command("Pick up the skull and place it in the green cup")
+            
+            # Invalid command should raise during execute
+            with pytest.raises(SmolVLAError, match="Invalid command"):
+                executor.execute("Pick up the banana")
 
 
 if __name__ == "__main__":
