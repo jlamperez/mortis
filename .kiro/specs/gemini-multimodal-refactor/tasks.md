@@ -185,7 +185,7 @@ This implementation plan breaks down the Gemini multi-modal refactor into discre
 
 ## Phase 5: SmolVLA Inference Integration
 
-- [ ] 20. Implement SmolVLA executor
+- [x] 20. Implement SmolVLA executor
   - Create `src/mortis/smolvla_executor.py` module
   - Implement `SmolVLAExecutor` class with model loading
   - Add checkpoint loading from configurable path
