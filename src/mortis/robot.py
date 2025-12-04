@@ -1,9 +1,12 @@
 # ({"shoulder_pan.pos": -45, "shoulder_lift.pos": -99, "elbow_flex.pos": 0, "wrist_flex.pos": 60, "wrist_roll.pos": 0, "gripper.pos": 60}, 0.5),
+import logging
 import os
 import time
 from pathlib import Path
 
 from lerobot.robots.so101_follower import SO101Follower, SO101FollowerConfig
+
+logger = logging.getLogger(__name__)
 
 HOME_POSE = {
     "shoulder_pan.pos": 0,
@@ -74,35 +77,35 @@ class MortisArm:
         )
         self.robot = SO101Follower(config)
         self.connected = False
-        print(f"MortisArm initialized. Port: {port}, Calibration directory: {config.calibration_dir}")
+        logger.info(f"MortisArm initialized on port {port} with calibration dir {config.calibration_dir}")
 
     def connect(self):
         """Connects to the robotic arm."""
         if not self.connected:
             try:
-                print("Connecting to Mortis' arm...")
+                logger.info("Attempting to connect to robot arm...")
                 self.robot.connect()
                 self.connected = self.robot.is_connected
                 if self.connected:
-                    print("✅ Mortis' arm connected.")
+                    logger.info("Robot arm connected successfully")
                     # Move to the initial position to indicate it's ready
                     self.move_arm("idle")
                 else:
-                    print("⚠️ Could not connect to Mortis' arm.")
+                    logger.warning("Failed to establish connection to robot arm")
             except Exception as e:
-                print(f"🚨 Connection error: {e}")
+                logger.error(f"Connection error: {e}", exc_info=True)
                 self.connected = False
 
     def disconnect(self):
         """Disconnects the robotic arm."""
         if self.connected:
-            print("Disconnecting Mortis' arm...")
+            logger.info("Disconnecting robot arm...")
             # Move to rest position before disconnecting
             self.move_arm("idle")
             time.sleep(1)
             self.robot.disconnect()
             self.connected = False
-            print("Arm disconnected.")
+            logger.info("Robot arm disconnected")
 
     def move_arm(self, gesture_name: str):
         """
@@ -110,23 +113,23 @@ class MortisArm:
         If the gesture does not exist, it executes 'idle'.
         """
         if not self.connected:
-            print("Arm is not connected. Cannot move.")
+            logger.warning("Cannot execute gesture: robot arm not connected")
             return
 
         # If the gesture is not defined, return to the neutral position.
         if gesture_name not in GESTURES:
-            print(f"Gesture '{gesture_name}' not recognized. Reverting to 'idle'.")
+            logger.warning(f"Unknown gesture '{gesture_name}', falling back to 'idle'")
             gesture_name = "idle"
 
         sequence = GESTURES[gesture_name]
-        print(f"Executing gesture: '{gesture_name}'...")
+        logger.info(f"Executing gesture '{gesture_name}' ({len(sequence)} steps)")
 
-        for action, delay in sequence:
-            # print(f"  -> Sending action: {action}")
+        for i, (action, delay) in enumerate(sequence, 1):
+            logger.debug(f"Gesture '{gesture_name}' step {i}/{len(sequence)}: {action}")
             self.robot.send_action(action)
             time.sleep(delay)
 
-        print(f"Gesture '{gesture_name}' completed.")
+        logger.info(f"Gesture '{gesture_name}' completed")
 
 
 if __name__ == "__main__":
