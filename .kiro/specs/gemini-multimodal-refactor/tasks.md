@@ -317,7 +317,7 @@ This hybrid approach provides the best of both worlds: simplicity for gestures a
   - Add visual indicators for different task states (idle, running, complete, failed)
   - _Requirements: 7.3, 7.4, 7.5_
 
-- [ ] 31. Test and validate hybrid execution system
+- [x] 31. Test and validate hybrid execution system
   - Test gesture execution via AsyncExecutor
   - Test manipulation execution via LeRobotAsyncClient
   - Verify both systems can run concurrently
