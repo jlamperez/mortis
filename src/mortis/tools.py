@@ -22,6 +22,8 @@ mortis_arm = MortisArm()
 gemini_client = None  # Lazy initialization
 stt_service = None  # Lazy initialization
 tts_service = None  # Lazy initialization
+intent_router = None  # Lazy initialization
+smolvla_executor = None  # Lazy initialization
 
 
 def _get_gemini_client() -> GeminiClient:
@@ -66,6 +68,52 @@ def _get_tts_service():
         tts_service = get_tts_service()
         logger.info("TTSService initialized")
     return tts_service
+
+
+def _get_intent_router():
+    """
+    Get or create the global IntentRouter instance.
+    
+    Returns:
+        IntentRouter instance
+    """
+    global intent_router
+    if intent_router is None:
+        from .intent_router import IntentRouter
+        intent_router = IntentRouter()
+        logger.info("IntentRouter initialized")
+    return intent_router
+
+
+def _get_smolvla_executor():
+    """
+    Get or create the global SmolVLAExecutor instance.
+    
+    Returns:
+        SmolVLAExecutor instance or None if not configured
+    """
+    global smolvla_executor
+    if smolvla_executor is None:
+        import os
+        checkpoint_path = os.getenv("SMOLVLA_CHECKPOINT_PATH")
+        
+        if checkpoint_path:
+            try:
+                from .smolvla_executor import SmolVLAExecutor
+                smolvla_executor = SmolVLAExecutor(
+                    checkpoint_path=checkpoint_path,
+                    robot_arm=mortis_arm
+                )
+                logger.info(f"SmolVLAExecutor initialized with checkpoint: {checkpoint_path}")
+            except Exception as e:
+                logger.warning(f"Failed to initialize SmolVLAExecutor: {e}")
+                logger.warning("Manipulation commands will fall back to gestures")
+                smolvla_executor = None
+        else:
+            logger.info("SMOLVLA_CHECKPOINT_PATH not set, manipulation commands will use gestures")
+            smolvla_executor = None
+    
+    return smolvla_executor
 
 
 def ask_mortis(
@@ -164,25 +212,88 @@ def ask_mortis(
     gemini_latency = time.time() - gemini_start
     logger.info(f"⏱️ Gemini latency: {gemini_latency:.2f}s")
     
-    # Parse response using GeminiResponse model
+    # Parse response using IntentRouter
     try:
-        response = GeminiResponse.from_json(response_json)
+        # Get intent router
+        router = _get_intent_router()
         
-        # Extract fields for backward compatibility
-        message = response.message
-        mood = response.mood.value
+        # Parse Gemini response into Intent
+        intent = router.parse_gemini_response(response_json)
         
-        # For conversation type, return gesture
-        # For manipulation type, return "idle" as gesture (manipulation handled separately)
-        if response.gesture:
-            gesture = response.gesture.value
-        else:
-            gesture = "idle"
+        # Extract fields for return
+        message = intent.message
+        mood = intent.mood
+        gesture = intent.gesture if intent.gesture else "idle"
+        
+        # Route based on intent type
+        execution_path = router.route_intent(intent)
+        
+        if execution_path == "manipulation":
+            # Valid manipulation command - attempt SmolVLA execution
+            logger.info(f"🤖 Manipulation command detected: '{intent.command}'")
+            
+            # Try to get SmolVLA executor
+            executor = _get_smolvla_executor()
+            
+            if executor is not None:
+                try:
+                    # Execute manipulation task
+                    logger.info(f"Executing manipulation task: {intent.command}")
+                    success = executor.execute(intent.command)
+                    
+                    if success:
+                        logger.info(f"✅ Manipulation task completed successfully")
+                    else:
+                        logger.warning(f"⚠️ Manipulation task did not complete fully")
+                    
+                    # Return with "manipulation" as gesture to indicate manipulation was executed
+                    gesture = "manipulation"
+                    
+                except Exception as e:
+                    logger.error(f"❌ SmolVLA execution failed: {e}")
+                    logger.info("Falling back to gesture execution")
+                    
+                    # Fallback to gesture execution
+                    gesture = "idle"
+                    if mortis_arm.connected:
+                        mortis_arm.move_arm(gesture)
+            else:
+                # No SmolVLA executor available, fall back to gesture
+                logger.warning("SmolVLA executor not available, falling back to gesture")
+                gesture = "idle"
+                if mortis_arm.connected:
+                    mortis_arm.move_arm(gesture)
+        
+        elif execution_path == "gesture":
+            # Conversational response with gesture
+            logger.info(f"💬 Conversation with gesture: {gesture}")
+            
+            # Execute gesture immediately
+            if mortis_arm.connected:
+                try:
+                    mortis_arm.move_arm(gesture)
+                except Exception as e:
+                    logger.error(f"Failed to execute gesture '{gesture}': {e}")
+        
+        elif execution_path == "invalid":
+            # Invalid intent - fall back to gesture
+            logger.warning(f"⚠️ Invalid intent: {intent.validation_error}")
+            logger.info("Falling back to conversational gesture")
+            
+            # Use gesture from intent or default to idle
+            gesture = intent.gesture if intent.gesture else "idle"
+            
+            # Execute gesture
+            if mortis_arm.connected:
+                try:
+                    mortis_arm.move_arm(gesture)
+                except Exception as e:
+                    logger.error(f"Failed to execute fallback gesture '{gesture}': {e}")
         
         # Calculate total pipeline latency
         total_latency = time.time() - pipeline_start
         logger.info(f"⏱️ Total pipeline latency: {total_latency:.2f}s")
-        logger.info(f"👻 Mortis responds (type: {response.type.value}, mood: {mood}, gesture: {gesture})")
+        logger.info(f"👻 Mortis responds (path: {execution_path}, mood: {mood}, gesture: {gesture})")
         
         return message, mood, gesture
         

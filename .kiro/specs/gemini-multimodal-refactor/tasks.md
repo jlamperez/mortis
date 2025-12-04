@@ -241,7 +241,7 @@ This implementation plan breaks down the Gemini multi-modal refactor into discre
   - Add examples of manipulation and conversational inputs
   - _Requirements: 3.1, 3.2_
 
-- [ ] 26. Integrate intent routing in main flow
+- [x] 26. Integrate intent routing in main flow
   - Update `ask_mortis()` to use `IntentRouter`
   - Implement routing logic for manipulation vs gesture execution
   - Add command validation before SmolVLA execution
