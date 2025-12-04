@@ -234,7 +234,7 @@ This implementation plan breaks down the Gemini multi-modal refactor into discre
   - Create `Intent` dataclass for structured intent representation
   - _Requirements: 3.2, 3.3, 3.4, 3.5_
 
-- [ ] 25. Update Gemini prompt for intent detection
+- [x] 25. Update Gemini prompt for intent detection
   - Enhance system prompt with all 6 manipulation task definitions
   - Add clear response format specification for manipulation vs conversation
   - Implement intent type detection in prompt
