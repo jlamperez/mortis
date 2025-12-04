@@ -9,6 +9,10 @@ import gradio as gr
 from .tools import ask_mortis, mortis_arm
 from .stt_service import STTService, AudioProcessingError
 from .tts_service import get_tts_service
+from .async_executor import AsyncExecutor, Task, TaskType
+from .lerobot_async_client import LeRobotAsyncClient
+from .intent_router import IntentRouter, Intent
+from .models import ResponseType
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -23,6 +27,11 @@ MODEL_CHOICES = [
 
 # Initialize STT service (global instance)
 stt_service = None
+
+# Initialize async execution systems (global instances)
+async_executor = None
+lerobot_client = None
+intent_router = None
 
 def get_stt_service():
     """Lazy initialization of STT service."""
@@ -51,6 +60,96 @@ def get_tts_service_instance():
             logging.getLogger(__name__).error(f"❌ Failed to initialize TTS service: {e}")
             raise
     return tts_service
+
+
+def execute_async_task(task: Task):
+    """
+    Execute a task asynchronously (called by AsyncExecutor worker thread).
+    
+    This function is called by the AsyncExecutor's worker thread to execute
+    tasks. It handles both gesture and manipulation tasks.
+    
+    Args:
+        task: Task to execute
+    """
+    logger = logging.getLogger(__name__)
+    
+    try:
+        if task.type == TaskType.GESTURE:
+            # Execute gesture using mortis_arm
+            gesture = task.gesture
+            logger.info(f"Executing gesture: {gesture}")
+            
+            if mortis_arm.connected:
+                mortis_arm.move_arm(gesture)
+            else:
+                logger.warning("Robot arm not connected, skipping gesture")
+        
+        elif task.type == TaskType.MANIPULATION:
+            # This shouldn't happen - manipulation goes through LeRobotAsyncClient
+            logger.warning(f"Manipulation task in AsyncExecutor: {task.command}")
+            logger.warning("Manipulation tasks should use LeRobotAsyncClient")
+        
+        else:
+            logger.error(f"Unknown task type: {task.type}")
+    
+    except Exception as e:
+        logger.error(f"Error executing task {task.id}: {e}", exc_info=True)
+        raise
+
+
+def get_async_executor():
+    """Lazy initialization of AsyncExecutor."""
+    global async_executor
+    if async_executor is None:
+        try:
+            # Create executor with gesture execution function
+            async_executor = AsyncExecutor(task_executor=execute_async_task)
+            logging.getLogger(__name__).info("✅ AsyncExecutor initialized")
+        except Exception as e:
+            logging.getLogger(__name__).error(f"❌ Failed to initialize AsyncExecutor: {e}")
+            raise
+    return async_executor
+
+
+def get_lerobot_client():
+    """Lazy initialization of LeRobotAsyncClient."""
+    global lerobot_client
+    if lerobot_client is None:
+        # Check if manipulation is enabled
+        enable_manipulation = os.getenv("ENABLE_MANIPULATION", "false").lower() == "true"
+        
+        if not enable_manipulation:
+            logging.getLogger(__name__).info("ℹ️ Manipulation disabled (ENABLE_MANIPULATION=false)")
+            return None
+        
+        try:
+            robot_port = os.getenv("ROBOT_PORT", "/dev/ttyACM1")
+            model_path = os.getenv("SMOLVLA_MODEL_PATH", "jlamperez/kiroween-potion-smolvla")
+            
+            lerobot_client = LeRobotAsyncClient(
+                robot_port=robot_port,
+                model_path=model_path
+            )
+            logging.getLogger(__name__).info("✅ LeRobotAsyncClient initialized")
+        except Exception as e:
+            logging.getLogger(__name__).error(f"❌ Failed to initialize LeRobotAsyncClient: {e}")
+            # Don't raise - manipulation is optional
+            return None
+    return lerobot_client
+
+
+def get_intent_router_instance():
+    """Lazy initialization of IntentRouter."""
+    global intent_router
+    if intent_router is None:
+        try:
+            intent_router = IntentRouter()
+            logging.getLogger(__name__).info("✅ IntentRouter initialized")
+        except Exception as e:
+            logging.getLogger(__name__).error(f"❌ Failed to initialize IntentRouter: {e}")
+            raise
+    return intent_router
 
 
 def build_css(image_path: str) -> str:
@@ -137,7 +236,11 @@ def mortis_reply(message, history, model_name):
 
 def mortis_reply_with_audio(message, history, model_name, audio_input_path=None):
     """
-    Generate Mortis reply with both text and audio output.
+    Generate Mortis reply with both text and audio output using hybrid execution.
+    
+    This function integrates the hybrid async execution system:
+    - Gestures are routed to AsyncExecutor (simple threading)
+    - Manipulation tasks are routed to LeRobotAsyncClient (LeRobot async inference)
     
     Supports both text and voice input through the unified voice pipeline.
     
@@ -152,32 +255,209 @@ def mortis_reply_with_audio(message, history, model_name, audio_input_path=None)
     """
     logger = logging.getLogger(__name__)
     
-    # Import the voice-integrated function
-    from .tools import ask_mortis_with_voice
+    # Import necessary components
+    from .gemini_client import GeminiClient
     
     # Log input type
     if audio_input_path:
         logger.info(f"🎤 Voice input: {audio_input_path}")
+        
+        # Transcribe audio to text
+        try:
+            stt = get_stt_service()
+            message = stt.transcribe(audio_input_path)
+            logger.info(f"📝 Transcribed: '{message[:50]}...'")
+            
+            if not message or not message.strip():
+                logger.warning("⚠️ STT returned empty transcription")
+                return "I couldn't hear you... speak again.", None
+        except Exception as e:
+            logger.error(f"❌ Voice input processing failed: {e}")
+            return "The spirits couldn't understand... try again.", None
     else:
         logger.info(f"💬 Text input: {message[:50]}{'...' if len(message) > 50 else ''}")
     
     logger.info(f"🤖 Using model: {model_name}")
     
-    # Use the complete voice pipeline
-    msg, mood, gesture, audio_path = ask_mortis_with_voice(
-        user_msg=message,
-        model_name=model_name,
-        audio_path=audio_input_path,
-        generate_audio=True
-    )
+    try:
+        # Get Gemini client and send message
+        gemini_client = GeminiClient()
+        if model_name:
+            gemini_client.configure_model(model_name=model_name)
+        
+        response_json = gemini_client.send_message(message)
+        
+        # Parse response using IntentRouter
+        router = get_intent_router_instance()
+        intent = router.parse_gemini_response(response_json)
+        
+        # Extract response components
+        msg = intent.message
+        mood = intent.mood
+        
+        logger.info(f"👻 Mortis reply: {msg[:50]}{'...' if len(msg) > 50 else ''}")
+        logger.info(f"😈 Mood: {mood}")
+        
+        # Route execution based on intent type
+        execution_path = router.route_intent(intent)
+        
+        if execution_path == "manipulation" and intent.is_valid:
+            # Route to LeRobotAsyncClient for manipulation
+            logger.info(f"🤖 Routing manipulation to LeRobotAsyncClient: {intent.command}")
+            
+            client = get_lerobot_client()
+            if client and client.is_running():
+                try:
+                    # Submit manipulation task asynchronously
+                    client.execute_task(intent.command, blocking=False)
+                    logger.info(f"✅ Manipulation task submitted: {intent.command}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to submit manipulation task: {e}")
+                    logger.info("Falling back to gesture execution")
+                    
+                    # Fallback to gesture
+                    executor = get_async_executor()
+                    if executor.running:
+                        task = Task.create_gesture_task("idle")
+                        executor.submit_task(task)
+            else:
+                logger.warning("LeRobotAsyncClient not available, falling back to gesture")
+                
+                # Fallback to gesture
+                executor = get_async_executor()
+                if executor.running:
+                    task = Task.create_gesture_task("idle")
+                    executor.submit_task(task)
+        
+        elif execution_path == "gesture":
+            # Route to AsyncExecutor for gesture
+            gesture = intent.gesture if intent.gesture else "idle"
+            logger.info(f"👋 Routing gesture to AsyncExecutor: {gesture}")
+            
+            executor = get_async_executor()
+            if executor.running:
+                try:
+                    # Submit gesture task asynchronously
+                    task = Task.create_gesture_task(gesture)
+                    executor.submit_task(task)
+                    logger.info(f"✅ Gesture task submitted: {gesture}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to submit gesture task: {e}")
+            else:
+                logger.warning("AsyncExecutor not running, executing gesture synchronously")
+                if mortis_arm.connected:
+                    mortis_arm.move_arm(gesture)
+        
+        else:
+            # Invalid intent - fallback to idle gesture
+            logger.warning(f"⚠️ Invalid intent, falling back to idle gesture")
+            
+            executor = get_async_executor()
+            if executor.running:
+                task = Task.create_gesture_task("idle")
+                executor.submit_task(task)
+            elif mortis_arm.connected:
+                mortis_arm.move_arm("idle")
+        
+        # Generate audio response
+        audio_path = None
+        try:
+            tts = get_tts_service_instance()
+            audio_path = tts.synthesize(msg)
+            
+            if audio_path:
+                logger.info(f"🔊 Audio output: {audio_path}")
+        except Exception as e:
+            logger.error(f"❌ TTS generation failed: {e}")
+            # Continue without audio
+        
+        return msg, audio_path
     
-    logger.info(f"👻 Mortis reply: {msg[:50]}{'...' if len(msg) > 50 else ''}")
-    logger.info(f"😈 Mood: {mood}, Gesture: {gesture}")
+    except Exception as e:
+        logger.error(f"❌ Error in mortis_reply_with_audio: {e}", exc_info=True)
+        return "The spirits are confused... try again.", None
+
+
+def start_async_systems():
+    """
+    Start the async execution systems on app load.
     
-    if audio_path:
-        logger.info(f"🔊 Audio output: {audio_path}")
+    This function initializes and starts:
+    1. Robot arm connection
+    2. AsyncExecutor for gesture execution
+    3. LeRobotAsyncClient for manipulation tasks (if enabled)
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("🚀 Starting async execution systems...")
     
-    return msg, audio_path
+    # Connect to robot arm
+    try:
+        if not mortis_arm.connected:
+            mortis_arm.connect()
+            logger.info("✅ Robot arm connected")
+        else:
+            logger.info("ℹ️ Robot arm already connected")
+    except Exception as e:
+        logger.error(f"❌ Failed to connect robot arm: {e}")
+        logger.info("ℹ️ Gestures will be skipped until robot is connected")
+    
+    # Start AsyncExecutor
+    try:
+        executor = get_async_executor()
+        if not executor.running:
+            executor.start()
+            logger.info("✅ AsyncExecutor started")
+    except Exception as e:
+        logger.error(f"❌ Failed to start AsyncExecutor: {e}")
+    
+    # Start LeRobotAsyncClient (if enabled)
+    try:
+        client = get_lerobot_client()
+        if client and not client.is_running():
+            success = client.start()
+            if success:
+                logger.info("✅ LeRobotAsyncClient started")
+            else:
+                logger.warning("⚠️ LeRobotAsyncClient failed to start")
+    except Exception as e:
+        logger.error(f"❌ Failed to start LeRobotAsyncClient: {e}")
+        logger.info("ℹ️ Manipulation tasks will fall back to gestures")
+
+
+def stop_async_systems():
+    """
+    Stop the async execution systems on app unload.
+    
+    This function gracefully shuts down:
+    1. AsyncExecutor
+    2. LeRobotAsyncClient
+    3. Robot arm connection
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("🛑 Stopping async execution systems...")
+    
+    # Stop AsyncExecutor
+    try:
+        if async_executor and async_executor.running:
+            async_executor.stop()
+            logger.info("✅ AsyncExecutor stopped")
+    except Exception as e:
+        logger.error(f"❌ Error stopping AsyncExecutor: {e}")
+    
+    # Stop LeRobotAsyncClient
+    try:
+        if lerobot_client and lerobot_client.is_running():
+            lerobot_client.stop()
+            logger.info("✅ LeRobotAsyncClient stopped")
+    except Exception as e:
+        logger.error(f"❌ Error stopping LeRobotAsyncClient: {e}")
+    
+    # Disconnect robot arm
+    try:
+        mortis_arm.disconnect()
+        logger.info("✅ Robot arm disconnected")
+    except Exception as e:
+        logger.error(f"❌ Error disconnecting robot arm: {e}")
 
 
 def ui() -> gr.Blocks:
@@ -305,7 +585,9 @@ def ui() -> gr.Blocks:
                 )
                 gr.Markdown("**Webcam (local, no data upload)**\nThe video is only processed in your browser.")
 
-        demo.unload(mortis_arm.disconnect)
+        # Lifecycle management: start async systems on load, stop on unload
+        demo.load(start_async_systems)
+        demo.unload(stop_async_systems)
 
     return demo
 

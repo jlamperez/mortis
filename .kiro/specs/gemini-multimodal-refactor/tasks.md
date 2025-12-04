@@ -299,7 +299,7 @@ This hybrid approach provides the best of both worlds: simplicity for gestures a
   - Create demo scripts and documentation
   - _Requirements: 7.1, 7.2, 7.5_
 
-- [ ] 29. Integrate hybrid execution in main application
+- [x] 29. Integrate hybrid execution in main application
   - Initialize both AsyncExecutor and LeRobotAsyncClient in app.py
   - Update `mortis_reply()` to route gestures to AsyncExecutor
   - Update `mortis_reply()` to route manipulation to LeRobotAsyncClient
