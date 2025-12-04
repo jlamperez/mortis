@@ -226,7 +226,7 @@ This implementation plan breaks down the Gemini multi-modal refactor into discre
 
 ## Phase 6: Intent Detection and Routing
 
-- [ ] 24. Implement intent router
+- [x] 24. Implement intent router
   - Create `src/mortis/intent_router.py` module
   - Implement `IntentRouter` class with task definitions
   - Add `parse_gemini_response()` method for JSON parsing
