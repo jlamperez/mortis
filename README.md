@@ -15,7 +15,9 @@ This project explores the haunting intersection of **language, embodiment, and r
 
 ## 🎥 Demo
 
-![Mortis Demo](assets/kiroween.png)
+[![Mortis Demo Video](assets/kiroween.png)](https://youtu.be/Ey4au6R8Z1g)
+
+Watch the full demo: https://youtu.be/Ey4au6R8Z1g
 
 
 ## 🚀 Features
