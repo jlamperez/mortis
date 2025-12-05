@@ -19,6 +19,27 @@ This project explores the haunting intersection of **language, embodiment, and r
 
 Watch the full demo: https://youtu.be/Ey4au6R8Z1g
 
+## 🌐 Try Mortis Online
+
+You can try Mortis directly on Hugging Face Spaces without any local installation:
+
+**🚀 [Launch Mortis on Hugging Face](https://huggingface.co/spaces/jlamperez/mortis)**
+
+### Important Notes for Hugging Face Deployment
+
+⚠️ **Required Configuration**: To use the chat functionality on Hugging Face Spaces, you **must** configure the `GEMINI_API_KEY` environment variable in your Space settings:
+
+1. Go to your Space settings
+2. Add a new secret: `GEMINI_API_KEY` with your Google Gemini API key
+3. Restart the Space
+
+**Without this configuration:**
+- ❌ Chat will not work and will return: `"The spirits are confused... try again."`
+- ❌ Speech-to-text functionality will not work
+- ✅ The UI will still load, but all AI features will be disabled
+
+Get your free Gemini API key at: https://aistudio.google.com/app/apikey
+
 
 ## 🚀 Features
 
