@@ -65,39 +65,64 @@ class MortisArm:
     """
     Class to control the Mortis SO101 robotic arm.
     Manages connection, disconnection, and gesture execution.
+    
+    Supports two modes:
+    - physical: Connects to real robot hardware
+    - simulation: Simulates robot behavior without hardware
     """
 
-    def __init__(self, port="/dev/ttyACM1"):
+    def __init__(self, port="/dev/ttyACM1", mode=None):
         port = os.getenv("ROBOT_PORT", port)
-
-        config = SO101FollowerConfig(
-            port=port,
-            id="my_follower_robot_arm",
-            calibration_dir=Path(".cache/calibration/so101/"),
-        )
-        self.robot = SO101Follower(config)
+        
+        # Determine mode: check env var or use provided mode
+        if mode is None:
+            mode = os.getenv("ROBOT_MODE", "physical").lower()
+        
+        self.mode = mode
         self.connected = False
-        logger.info(f"MortisArm initialized on port {port} with calibration dir {config.calibration_dir}")
+        
+        if self.mode == "simulation":
+            logger.info("🎭 MortisArm initialized in SIMULATION mode (no physical robot)")
+            self.robot = None
+            self.connected = True  # Always "connected" in simulation
+        else:
+            config = SO101FollowerConfig(
+                port=port,
+                id="my_follower_robot_arm",
+                calibration_dir=Path(".cache/calibration/so101/"),
+            )
+            self.robot = SO101Follower(config)
+            logger.info(f"🤖 MortisArm initialized in PHYSICAL mode on port {port}")
 
     def connect(self):
         """Connects to the robotic arm."""
+        if self.mode == "simulation":
+            logger.info("🎭 Simulation mode: skipping physical connection")
+            self.connected = True
+            return
+        
         if not self.connected:
             try:
                 logger.info("Attempting to connect to robot arm...")
                 self.robot.connect()
                 self.connected = self.robot.is_connected
                 if self.connected:
-                    logger.info("Robot arm connected successfully")
+                    logger.info("✅ Robot arm connected successfully")
                     # Move to the initial position to indicate it's ready
                     self.move_arm("idle")
                 else:
-                    logger.warning("Failed to establish connection to robot arm")
+                    logger.warning("⚠️ Failed to establish connection to robot arm")
             except Exception as e:
-                logger.error(f"Connection error: {e}", exc_info=True)
+                logger.error(f"❌ Connection error: {e}", exc_info=True)
                 self.connected = False
 
     def disconnect(self):
         """Disconnects the robotic arm."""
+        if self.mode == "simulation":
+            logger.info("🎭 Simulation mode: skipping physical disconnection")
+            self.connected = False
+            return
+        
         if self.connected:
             logger.info("Disconnecting robot arm...")
             # Move to rest position before disconnecting
@@ -105,7 +130,7 @@ class MortisArm:
             time.sleep(1)
             self.robot.disconnect()
             self.connected = False
-            logger.info("Robot arm disconnected")
+            logger.info("✅ Robot arm disconnected")
 
     def move_arm(self, gesture_name: str):
         """
@@ -113,23 +138,35 @@ class MortisArm:
         If the gesture does not exist, it executes 'idle'.
         """
         if not self.connected:
-            logger.warning("Cannot execute gesture: robot arm not connected")
+            logger.warning("⚠️ Cannot execute gesture: robot arm not connected")
             return
 
         # If the gesture is not defined, return to the neutral position.
         if gesture_name not in GESTURES:
-            logger.warning(f"Unknown gesture '{gesture_name}', falling back to 'idle'")
+            logger.warning(f"⚠️ Unknown gesture '{gesture_name}', falling back to 'idle'")
             gesture_name = "idle"
 
         sequence = GESTURES[gesture_name]
-        logger.info(f"Executing gesture '{gesture_name}' ({len(sequence)} steps)")
+        
+        if self.mode == "simulation":
+            # Simulation mode: just log the gesture
+            logger.info(f"🎭 [SIMULATION] Executing gesture '{gesture_name}' ({len(sequence)} steps)")
+            
+            # Simulate timing by sleeping for total duration
+            total_delay = sum(delay for _, delay in sequence)
+            time.sleep(total_delay)
+            
+            logger.info(f"🎭 [SIMULATION] Gesture '{gesture_name}' completed")
+        else:
+            # Physical mode: execute on real robot
+            logger.info(f"🤖 Executing gesture '{gesture_name}' ({len(sequence)} steps)")
 
-        for i, (action, delay) in enumerate(sequence, 1):
-            logger.debug(f"Gesture '{gesture_name}' step {i}/{len(sequence)}: {action}")
-            self.robot.send_action(action)
-            time.sleep(delay)
+            for i, (action, delay) in enumerate(sequence, 1):
+                logger.debug(f"Gesture '{gesture_name}' step {i}/{len(sequence)}: {action}")
+                self.robot.send_action(action)
+                time.sleep(delay)
 
-        logger.info(f"Gesture '{gesture_name}' completed")
+            logger.info(f"✅ Gesture '{gesture_name}' completed")
 
 
 if __name__ == "__main__":

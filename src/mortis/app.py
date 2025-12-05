@@ -119,6 +119,14 @@ def get_lerobot_client():
     
     # Use a sentinel value to indicate we've already checked and manipulation is disabled
     if lerobot_client is None:
+        # Check if we're in simulation mode
+        robot_mode = os.getenv("ROBOT_MODE", "physical").lower()
+        if robot_mode == "simulation":
+            # Set to False to indicate manipulation is not available in simulation
+            lerobot_client = False
+            logging.getLogger(__name__).info("ℹ️ Manipulation disabled in simulation mode")
+            return None
+        
         # Check if manipulation is enabled
         enable_manipulation = os.getenv("ENABLE_MANIPULATION", "false").lower() == "true"
         
@@ -413,7 +421,10 @@ def start_async_systems():
     try:
         if not mortis_arm.connected:
             mortis_arm.connect()
-            logger.info("✅ Robot arm connected")
+            if mortis_arm.mode == "simulation":
+                logger.info("🎭 Robot arm in SIMULATION mode")
+            else:
+                logger.info("✅ Robot arm connected")
         else:
             logger.info("ℹ️ Robot arm already connected")
     except Exception as e:
@@ -459,6 +470,10 @@ def check_status():
     logger = logging.getLogger(__name__)
     
     status_parts = []
+    
+    # Add robot mode indicator
+    if mortis_arm.mode == "simulation":
+        status_parts.append("🎭 SIMULATION MODE")
     
     # Check AsyncExecutor status
     try:
@@ -566,9 +581,11 @@ def stop_async_systems():
 def ui() -> gr.Blocks:
     css=build_css(BG_IMAGE)
     with gr.Blocks(fill_height=True, theme="soft", css=css) as demo:
+        # Dynamic title based on robot mode
+        mode_indicator = " (Simulation Mode 🎭)" if mortis_arm.mode == "simulation" else ""
         gr.Markdown(
-            "# Kiroween Hackathon 🎃\n"
-            "## Mortis: Haunted Control Room 👻🤖",
+            f"# Kiroween Hackathon 🎃\n"
+            f"## Mortis: Haunted Control Room 👻🤖{mode_indicator}",
             elem_id="app-title"
         )
 

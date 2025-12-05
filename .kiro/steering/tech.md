@@ -64,3 +64,6 @@ PORT=7860                # Optional, defaults to 7860
 - **Connection**: USB serial (typically /dev/ttyACM1)
 - **Calibration**: Stored in `.cache/calibration/so101/`
 - **Control**: LeRobot framework with SO101Follower driver
+- **Modes**: 
+  - `physical` - Connects to real robot hardware (default)
+  - `simulation` - Simulates robot without hardware (for development/testing)

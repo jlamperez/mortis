@@ -11,7 +11,7 @@ ENV_FILE := .env
 REQUIRED_ENV := GEMINI_API_KEY
 
 # ---------- Targets ----------
-.PHONY: help install sync lock upgrade run run-m calibrate test-gesture demo setup-dataset setup-train check-env add-% export clean
+.PHONY: help install sync lock upgrade run run-m run-sim calibrate test-gesture test-sim demo setup-dataset setup-train check-env add-% export clean
 
 help:
 	@echo "Available commands:"
@@ -21,8 +21,10 @@ help:
 	@echo "  make upgrade     - Upgrade versions and regenerate lock"
 	@echo "  make run         - Run CLI '$(APP)'"
 	@echo "  make run-m       - Run 'python -m $(MODULE)'"
+	@echo "  make run-sim     - Run in simulation mode (no physical robot)"
 	@echo "  make calibrate   - Run the robot calibration script"
 	@echo "  make test-gesture- Run a test gesture with the robotic arm"
+	@echo "  make test-sim    - Test simulation mode"
 	@echo "  make demo        - Run $(DEMO)"
 	@echo "  make setup-dataset - Setup dataset infrastructure (use ARGS='--dataset-name=NAME' for custom name)"
 	@echo "  make setup-train - Generate training scripts (use ARGS='--dataset-repo-id=user/dataset' required)"
@@ -48,11 +50,17 @@ run: check-env
 run-m: check-env
 	$(UV) run python -m $(MODULE)
 
+run-sim: check-env
+	ROBOT_MODE=simulation $(UV) run $(APP)
+
 calibrate:
 	$(UV) run calibrate
 
 test-gesture:
 	$(UV) run python -m mortis.robot
+
+test-sim:
+	$(UV) run python examples/test_simulation.py
 
 demo: check-env
 	@test -f $(DEMO) || { echo "$(DEMO) does not exist. Create a demo or change the path."; exit 1; }

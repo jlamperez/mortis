@@ -95,6 +95,14 @@ def _get_smolvla_executor():
     global smolvla_executor
     if smolvla_executor is None:
         import os
+        
+        # Check if we're in simulation mode
+        robot_mode = os.getenv("ROBOT_MODE", "physical").lower()
+        if robot_mode == "simulation":
+            logger.info("SmolVLA disabled in simulation mode")
+            smolvla_executor = None
+            return None
+        
         checkpoint_path = os.getenv("SMOLVLA_CHECKPOINT_PATH")
         
         if checkpoint_path:

@@ -82,6 +82,9 @@ GEMINI_MODEL=gemini-2.5-flash
 GEMINI_TEMPERATURE=0.2
 ROBOT_PORT=/dev/ttyACM1
 PORT=7860
+
+# Robot Mode: physical or simulation (default: physical)
+ROBOT_MODE=physical  # Use "simulation" if you don't have a physical robot
 ```
 
 You can copy the example file and edit it:
@@ -173,14 +176,37 @@ If you've trained a SmolVLA model and enabled manipulation (`ENABLE_MANIPULATION
 4. Physical setup matching your training environment (objects, cups, camera positions)
 
 
-## 🤖 Robot Arm Calibration
+## 🤖 Robot Arm Setup
 
-Before using the robotic arm for the first time, it needs to be calibrated.
+### Simulation Mode (No Physical Robot)
+
+If you don't have a physical SO101 robot arm, you can run Mortis in **simulation mode**:
+
+```bash
+# In .env file
+ROBOT_MODE=simulation
+```
+
+In simulation mode:
+- ✅ All features work (chat, voice, gestures)
+- 🎭 Gestures are logged but not physically executed
+- 💬 Perfect for testing the AI conversation flow
+- 🚀 No hardware setup required
+
+The UI will display "Simulation Mode 🎭" to indicate you're running without hardware.
+
+### Physical Robot Calibration
+
+If you have a physical SO101 arm, before using it for the first time, it needs to be calibrated.
 This process sets the initial positions and limits for each motor.
 
 To start the calibration, connect the arm and run:
 
 ```bash
+# In .env file
+ROBOT_MODE=physical  # This is the default
+
+# Then calibrate
 make calibrate
 ```
 
@@ -348,6 +374,11 @@ make run
 
 **Solution**:
 ```bash
+# Option 1: Use simulation mode (no physical robot needed)
+echo "ROBOT_MODE=simulation" >> .env
+make run
+
+# Option 2: Fix physical robot connection
 # 1. Check USB connection
 ls /dev/ttyACM*
 # Should show /dev/ttyACM0 or /dev/ttyACM1
@@ -488,6 +519,7 @@ If you encounter issues not covered here:
 
 ### Getting Started
 - [Quick Reference](docs/QUICK_REFERENCE.md) - Common commands and workflows
+- [Simulation Mode Guide](docs/SIMULATION_MODE.md) - Run Mortis without physical robot
 - [Troubleshooting Guide](docs/TROUBLESHOOTING.md) - Comprehensive problem-solving guide
 
 ### User Guides
